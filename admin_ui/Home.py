@@ -32,6 +32,21 @@ helpers. Importing this module therefore never requires a Streamlit runtime
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+
+# Ensure the project root is importable when Streamlit launches this script
+# directly (`streamlit run admin_ui/Home.py`), which puts the script's own
+# directory on sys.path rather than the project root, breaking `admin_ui.*`
+# imports. Walk up until the directory containing the ``admin_ui`` package.
+_root = _os.path.abspath(__file__)
+for _ in range(4):
+    _root = _os.path.dirname(_root)
+    if _os.path.isdir(_os.path.join(_root, "admin_ui")):
+        break
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+
 from typing import Any
 
 from admin_ui.ui.components import (

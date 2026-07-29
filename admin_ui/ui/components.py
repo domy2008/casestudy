@@ -337,24 +337,13 @@ def render_sidebar_nav(active_key: str) -> None:
     """
     import streamlit as st
 
+    # Streamlit's built-in multipage navigation (auto-generated from the files
+    # in ``pages/``) is the single functional menu. We intentionally do NOT
+    # render a second per-screen list here — doing so produced a duplicate
+    # sidebar menu. We only add a small branding header above the native nav.
     with st.sidebar:
         st.markdown("### IntelliKnow KMS")
-        for screen in SCREENS:
-            accent = accent_color(screen.module)
-            is_active = screen.key == active_key
-            if is_active:
-                st.markdown(
-                    f'<div style="background:{accent};color:#ffffff;'
-                    f"border-radius:8px;padding:8px 12px;margin:4px 0;"
-                    f'font-weight:600">{screen.icon}&nbsp;{screen.title}</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f'<div style="color:{NEUTRAL["muted"]};padding:8px 12px;'
-                    f'margin:4px 0">{screen.icon}&nbsp;{screen.title}</div>',
-                    unsafe_allow_html=True,
-                )
+        st.caption("Gen AI Knowledge Management")
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,18 @@ without a server (mirroring the pure-helper split in ``ui/components.py``).
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+
+# Make the project root importable when Streamlit runs this page directly.
+_root = _os.path.abspath(__file__)
+for _ in range(4):
+    _root = _os.path.dirname(_root)
+    if _os.path.isdir(_os.path.join(_root, "admin_ui")):
+        break
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+
 from dataclasses import dataclass
 from typing import Any
 

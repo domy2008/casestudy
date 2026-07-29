@@ -45,6 +45,18 @@ are unit-testable without a running Streamlit server.
 
 from __future__ import annotations
 
+import os as _os
+import sys as _sys
+
+# Make the project root importable when Streamlit runs this page directly.
+_root = _os.path.abspath(__file__)
+for _ in range(4):
+    _root = _os.path.dirname(_root)
+    if _os.path.isdir(_os.path.join(_root, "admin_ui")):
+        break
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+
 import base64
 from typing import Any
 
