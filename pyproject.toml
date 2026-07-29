@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intelliknow-kms"
+version = "0.1.0"
+description = "Gen AI-powered Knowledge Management System: Telegram/Teams bots, RAG over an admin-managed knowledge base"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = { find = { include = ["app*"] } }
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+# Test discovery: everything under tests/ (unit, properties, integration).
+testpaths = ["tests"]
+# -v reports a pass/fail line per individual test; -ra summarizes failures.
+# The trailing summary line carries total/passed/failed counts (Req 14.3).
+addopts = "-v -ra"
+# Async tests run without per-test @pytest.mark.asyncio decoration.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

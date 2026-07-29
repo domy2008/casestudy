@@ -1,0 +1,32 @@
+# IntelliKnow KMS — pinned runtime and test dependencies (Python 3.11+)
+
+# Backend API + async HTTP
+fastapi==0.115.12
+uvicorn==0.34.0
+httpx==0.28.1
+
+# Admin UI
+streamlit==1.44.1
+
+# Vector search + numerics
+faiss-cpu==1.10.0
+numpy==2.2.4
+
+# Document extraction
+pypdf==5.4.0
+pdfplumber==0.11.6
+python-docx==1.1.2
+openpyxl==3.1.5
+
+# Security
+cryptography==44.0.2
+
+# AWS (CloudWatch metrics) + AI vendor
+boto3==1.37.0
+dashscope==1.22.2
+
+# Testing
+pytest==8.3.5
+pytest-asyncio==0.26.0
+hypothesis==6.130.0
+respx==0.22.0

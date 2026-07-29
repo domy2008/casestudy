@@ -1,0 +1,82 @@
+# IntelliKnow KMS — single-EC2 deployment for AWS China (Req 12).
+#
+# Services:
+#   app              FastAPI backend (Teams webhook + admin API on :8000)
+#   admin-ui         Streamlit admin UI on :8501
+#   cloudwatch-agent Ships container logs + host metrics to CloudWatch (Req 13.2)
+#
+# Persistence: everything stateful lives under /opt/intelliknow/data on the
+# EC2 host (EBS-backed), bind-mounted into the app container at /data, so it
+# survives container restart, recreation, and image updates (Req 12.4).
+#
+# Secrets: TELEGRAM_PROXY_URL and CREDENTIAL_MASTER_KEY are sourced from
+# /opt/intelliknow/.env — a host-only file that is never committed (Req 11.1).
+# Copy .env.example to /opt/intelliknow/.env on the host and fill it in.
+#
+# Restart policy: `unless-stopped` on every service. With the Docker daemon
+# enabled at boot (systemctl enable docker), all services come back within
+# 5 minutes of an OS boot (Req 12.3) and crashed containers are restarted by
+# dockerd within 60 seconds (Req 12.5).
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: intelliknow-kms/app:latest
+    restart: unless-stopped
+    env_file:
+      - /opt/intelliknow/.env
+    environment:
+      DATA_DIR: /data
+      # AWS China region for CloudWatch metrics/logs (cn-north-1 = Beijing,
+      # cn-northwest-1 = Ningxia). Override in /opt/intelliknow/.env if needed.
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-cn-north-1}
+    volumes:
+      - /opt/intelliknow/data:/data
+    ports:
+      - "8000:8000"   # Teams inbound webhook + admin REST API
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  admin-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin-ui
+    image: intelliknow-kms/admin-ui:latest
+    restart: unless-stopped
+    environment:
+      # The Streamlit UI reaches the backend over the compose network.
+      API_BASE_URL: http://app:8000
+    ports:
+      - "8501:8501"   # Admin UI — restrict via security group to admin IPs
+    depends_on:
+      - app
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  cloudwatch-agent:
+    image: amazon/cloudwatch-agent:latest
+    restart: unless-stopped
+    environment:
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-cn-north-1}
+      CW_CONFIG_CONTENT: ""   # config supplied via bind mount below
+    volumes:
+      - ./deploy/cloudwatch-agent-config.json:/etc/cwagentconfig/config.json:ro
+      # Read container json-file logs from the host so application stdout
+      # (JSON structured logs) reaches CloudWatch Logs within ~60s (Req 13.2).
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["-config", "/etc/cwagentconfig/config.json"]

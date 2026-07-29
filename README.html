@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IntelliKnow KMS — README</title>
+<style>
+  :root {
+    --accent-blue: #2563eb;
+    --accent-green: #16a34a;
+    --accent-purple: #7c3aed;
+    --bg: #f8fafc;
+    --card-bg: #ffffff;
+    --text: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --code-bg: #f1f5f9;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text);
+    margin: 0; padding: 32px 16px; line-height: 1.65;
+    font-size: clamp(15px, 1.5vw + 12px, 16px);
+  }
+  .container { max-width: 960px; margin: 0 auto; }
+  header.hero {
+    background: linear-gradient(135deg, #1e293b, #334155);
+    color: #fff; border-radius: 12px; padding: 40px 32px; margin-bottom: 24px;
+  }
+  header.hero h1 { margin: 0 0 8px; font-size: clamp(1.5rem, 4vw, 2rem); }
+  header.hero p { margin: 0; color: #cbd5e1; font-size: 1.05rem; }
+  .badges { margin-top: 16px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 600; margin-right: 6px; color: #fff;
+  }
+  .b-blue { background: var(--accent-blue); }
+  .b-green { background: var(--accent-green); }
+  .b-purple { background: var(--accent-purple); }
+  .b-gray { background: #475569; }
+  section.card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 24px; margin-bottom: 20px;
+  }
+  h2 { font-size: 1.35rem; border-bottom: 2px solid var(--border); padding-bottom: 8px; margin-top: 8px; }
+  h3 { font-size: 1.05rem; margin-bottom: 6px; }
+  h2 .num { color: var(--muted); font-weight: 500; margin-right: 8px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.92rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  code {
+    background: var(--code-bg); padding: 2px 6px; border-radius: 4px;
+    font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.86em;
+  }
+  pre {
+    background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px;
+    overflow-x: auto; font-size: 0.85rem; line-height: 1.5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  .callout {
+    border-left: 4px solid var(--accent-blue); background: #eff6ff;
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 0.92rem;
+  }
+  .callout.warn { border-left-color: #d97706; background: #fffbeb; }
+  ul { padding-left: 22px; }
+  footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 32px; }
+  a { color: var(--accent-blue); word-break: break-word; }
+
+  /* ---------- Mobile-friendly adjustments ---------- */
+  @media (max-width: 640px) {
+    body { padding: 12px 8px; line-height: 1.6; }
+    header.hero { padding: 24px 18px; border-radius: 10px; }
+    header.hero p { font-size: 0.95rem; }
+    .badge { margin-bottom: 6px; }
+    section.card { padding: 12px 14px; border-radius: 10px; }
+    h2 { font-size: 1.15rem; }
+    h3 { font-size: 1rem; }
+    ul, ol { padding-left: 18px; }
+    /* Tables scroll horizontally when needed, cells wrap naturally */
+    table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    th, td { padding: 6px 10px; font-size: 0.85rem; min-width: 90px; }
+    /* Code blocks scroll instead of overflowing the card */
+    pre { padding: 12px; font-size: 0.78rem; border-radius: 6px; }
+    .callout { padding: 10px 12px; font-size: 0.88rem; }
+  }
+  /* Slightly larger phones / small tablets */
+  @media (min-width: 641px) and (max-width: 900px) {
+    section.card { padding: 14px 18px; }
+    table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  }
+  /* Comfortable tap targets on touch devices */
+  @media (pointer: coarse) {
+    a { padding: 2px 0; }
+    li { margin-bottom: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="hero">
+  <h1>IntelliKnow KMS</h1>
+  <p>A Gen AI-powered Knowledge Management System — ask questions from Telegram or Microsoft Teams and get cited answers grounded in your organization's documents.</p>
+  <div class="badges">
+    <span class="badge b-blue">Telegram + Teams</span>
+    <span class="badge b-green">RAG Knowledge Base</span>
+    <span class="badge b-purple">AI Intent Routing</span>
+    <span class="badge b-gray">AWS China · Docker Compose</span>
+  </div>
+</header>
+
+<section class="card">
+  <h2><span class="num">1.</span>Overview</h2>
+  <p>IntelliKnow KMS addresses fragmented enterprise information, inefficient knowledge retrieval, and siloed communication channels. It provides:</p>
+  <ul>
+    <li><strong>Multi-frontend integration</strong> — end users query the knowledge base directly from Telegram and Microsoft Teams; responses are formatted natively per tool with a &lt;3s p95 latency target.</li>
+    <li><strong>Document-driven knowledge base</strong> — upload PDF, DOCX, XLSX, TXT, or Markdown files (≤50&nbsp;MB); content is AI-parsed (including embedded tables such as salary grids), chunked, embedded, and indexed for semantic search.</li>
+    <li><strong>Intent orchestrator</strong> — queries are classified by AI into intent spaces (HR, Legal, Finance, General, plus custom spaces) with a configurable confidence threshold (default 70%) and graceful fallback to General.</li>
+    <li><strong>RAG responses with citations</strong> — answers are generated exclusively from retrieved passages and always cite their source documents; a clear no-match message is returned when nothing relevant is found.</li>
+    <li><strong>Admin web UI</strong> — five screens (Dashboard, Frontend Integration, KB Management, Intent Configuration, Analytics) to operate the entire system.</li>
+    <li><strong>Analytics &amp; observability</strong> — query history, classification accuracy, KB usage metrics, CSV export, plus CloudWatch metrics, logs, and alarms.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2><span class="num">2.</span>Tech Stack</h2>
+  <table>
+    <tr><th>Concern</th><th>Technology</th><th>Notes</th></tr>
+    <tr><td>Backend API &amp; bots</td><td>Python 3.11, FastAPI, httpx (async)</td><td>Bot integration, orchestrator, RAG, admin REST API</td></tr>
+    <tr><td>Admin UI</td><td>Streamlit (multi-page app)</td><td>5 screens, card-based layout</td></tr>
+    <tr><td>Metadata &amp; query log</td><td>SQLite (WAL mode)</td><td>Zero-ops persistence on a bind-mounted volume</td></tr>
+    <tr><td>Vector search</td><td>FAISS (IndexFlatIP, cosine)</td><td>One index per intent space; rebuilt from SQLite embeddings</td></tr>
+    <tr><td>LLM</td><td>Aliyun Tongyi Qwen-Max via DashScope API</td><td>Document structuring, intent classification, RAG generation</td></tr>
+    <tr><td>Embeddings</td><td>DashScope text-embedding-v3</td><td>Same vendor and credentials as the LLM</td></tr>
+    <tr><td>Document parsing</td><td>pypdf, pdfplumber, python-docx, openpyxl</td><td>Loader-per-format pattern; tables preserved as markdown</td></tr>
+    <tr><td>Deployment</td><td>Docker Compose on AWS China EC2</td><td>3 services: app, admin-ui, cloudwatch-agent</td></tr>
+    <tr><td>Monitoring</td><td>CloudWatch + SNS</td><td>Latency, error rate, integration health metrics and alarms</td></tr>
+    <tr><td>Testing</td><td>pytest, pytest-asyncio, Hypothesis, respx</td><td>Unit + property-based + integration tests</td></tr>
+  </table>
+</section>
+
+<section class="card">
+  <h2><span class="num">3.</span>Architecture at a Glance</h2>
+  <pre><code>Telegram ⇄ Outbound Proxy ⇄ ┐
+                             │   ┌──────────────────────────────────────────┐
+MS Teams (Bot Framework) ──▶ ├──▶│ app (FastAPI)                            │
+                                 │  Frontend Integration → Orchestrator     │
+                                 │  → FAISS Retrieval → RAG Generator       │──▶ DashScope (Qwen-Max)
+                                 │  Analytics · Credential Store · Metrics  │
+                                 └───────────────┬──────────────────────────┘
+        admin-ui (Streamlit) ── REST ────────────┤
+        cloudwatch-agent ── logs/metrics ──▶ CloudWatch ──▶ SNS alarms
+                                                 │
+                              /data volume (SQLite · FAISS · uploads · credentials)</code></pre>
+  <div class="callout">
+    <strong>AWS China note:</strong> Telegram is unreachable from AWS China regions, so the Telegram integration uses <em>long polling routed through an outbound proxy</em> (outbound-only — no inbound public endpoint needed). Teams and DashScope traffic goes direct.
+  </div>
+  <p>Full details: see <code>docs/ARCHITECTURE.md</code>, <code>docs/HLD.md</code>, and <code>docs/LLD.md</code> (generated during implementation).</p>
+</section>
+
+<section class="card">
+  <h2><span class="num">4.</span>Prerequisites</h2>
+  <ul>
+    <li>Docker and Docker Compose (v2) installed — on the EC2 host, enable Docker via systemd so containers restart on boot</li>
+    <li>An AWS China EC2 instance (4&nbsp;GB+ RAM recommended) with an IAM role or credentials permitting CloudWatch <code>PutMetricData</code>, CloudWatch Logs, and SNS publish</li>
+    <li>An HTTPS forward proxy endpoint reachable from the instance with Telegram connectivity (for the outbound proxy)</li>
+    <li>A DashScope API key (Aliyun Tongyi Qwen-Max)</li>
+    <li>A Telegram bot token (from <a href="https://t.me/BotFather">@BotFather</a>) and a Microsoft Teams bot registration (App ID + password)</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2><span class="num">5.</span>Setup</h2>
+  <h3>5.1 Clone and configure</h3>
+  <pre><code># 1. Clone the repository
+git clone &lt;YOUR_REPO_URL&gt; intelliknow-kms
+cd intelliknow-kms
+
+# 2. Create the host-only environment file (never committed to git)
+sudo mkdir -p /opt/intelliknow
+sudo tee /opt/intelliknow/.env &gt; /dev/null &lt;&lt;'EOF'
+CREDENTIAL_MASTER_KEY=&lt;generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"&gt;
+TELEGRAM_PROXY_URL=http://&lt;your-proxy-host&gt;:&lt;port&gt;
+AWS_REGION=cn-north-1
+EOF
+sudo chmod 600 /opt/intelliknow/.env
+
+# 3. Create the persistent data directory
+sudo mkdir -p /data/{uploads,faiss,credentials,logbuffer}</code></pre>
+
+  <h3>5.2 Build and start</h3>
+  <pre><code>docker compose --env-file /opt/intelliknow/.env up -d --build
+
+# Admin UI:    http://&lt;host&gt;:8501
+# Backend API: http://&lt;host&gt;:8000  (Teams webhook: POST /webhooks/teams)</code></pre>
+
+  <h3>5.3 Configure credentials (via Admin UI)</h3>
+  <p>Open the Admin UI → <strong>Frontend Integration</strong> screen and enter:</p>
+  <ul>
+    <li><strong>DashScope</strong>: API key (<code>sk-…</code>)</li>
+    <li><strong>Telegram</strong>: bot token</li>
+    <li><strong>Teams</strong>: App ID and App password</li>
+  </ul>
+  <p>Credentials are validated before storage, saved to an encrypted store on the data volume (never in source code or git), masked in the UI (last 4 characters only), and redacted from all logs.</p>
+
+  <h3>5.4 Provision monitoring</h3>
+  <pre><code># Creates CloudWatch alarms (latency &gt; 3s, error rate &gt; 5%, integration unhealthy) wired to SNS
+python scripts/setup_cloudwatch_alarms.py --sns-topic &lt;arn&gt;</code></pre>
+
+  <h3>5.5 Verify</h3>
+  <ul>
+    <li>Use the <strong>Test</strong> button on each integration card to run an end-to-end connectivity check</li>
+    <li>Upload a sample document on <strong>KB Management</strong> and wait for status <em>Processed</em></li>
+    <li>Send a question to your bot in Telegram or Teams and confirm a cited answer arrives</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2><span class="num">6.</span>Integration Guide</h2>
+  <h3>6.1 Telegram</h3>
+  <ol>
+    <li>Create a bot with <a href="https://t.me/BotFather">@BotFather</a> (<code>/newbot</code>) and copy the bot token.</li>
+    <li>Enter the token on the Admin UI → Frontend Integration → Telegram card and save.</li>
+    <li>The app starts a long-polling loop through the outbound proxy automatically — no webhook or public endpoint required.</li>
+    <li>Click <strong>Test</strong> to verify connectivity, then message your bot.</li>
+  </ol>
+  <h3>6.2 Microsoft Teams</h3>
+  <ol>
+    <li>Register a bot in the <a href="https://dev.botframework.com/">Bot Framework portal</a> / Azure Bot Service; note the App ID and generate an App password.</li>
+    <li>Set the bot's messaging endpoint to <code>https://&lt;your-host&gt;/webhooks/teams</code> (HTTPS required — front the app with a TLS terminator or ALB).</li>
+    <li>Enter the App ID and password on the Admin UI → Frontend Integration → Teams card and save.</li>
+    <li>Add the bot to Teams (app manifest / sideload), click <strong>Test</strong>, then chat with it.</li>
+  </ol>
+  <div class="callout warn">
+    <strong>Latency SLO:</strong> the pipeline targets &lt;3 seconds end-to-end (p95) from message receipt to response delivery. A CloudWatch alarm fires if the p95 exceeds the configured threshold over 5 minutes.
+  </div>
+</section>
+
+<section class="card">
+  <h2><span class="num">7.</span>Using the System</h2>
+  <ul>
+    <li><strong>Dashboard</strong> — integration status, document counts by status, 24-hour query activity.</li>
+    <li><strong>KB Management</strong> — drag-and-drop upload (PDF/DOCX/XLSX/TXT/MD, ≤50&nbsp;MB), document table with search/filter, View/Delete/Update actions, intent space assignment.</li>
+    <li><strong>Intent Configuration</strong> — manage intent spaces (HR/Legal/Finance defaults + custom), define up to 50 keywords per space to guide classification, tune the confidence threshold (0–100, default 70).</li>
+    <li><strong>Analytics</strong> — query history with filters, top-10 documents and intent spaces, per-space classification accuracy, admin verification of classifications, CSV export.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2><span class="num">8.</span>Testing</h2>
+  <pre><code># Run the complete test suite (unit + property-based + integration) in one command
+make test        # equivalent to: pytest</code></pre>
+  <ul>
+    <li><strong>Unit tests</strong> — document parsing, classification routing, per-tool response formatting, credential handling (nominal + error paths for each).</li>
+    <li><strong>Property-based tests</strong> — Hypothesis, one test per correctness property from the design (25 properties, ≥100 iterations each).</li>
+    <li><strong>Integration tests</strong> — end-to-end query flow with DashScope, Telegram, and Teams APIs mocked; FAISS and SQLite run real in temp directories.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2><span class="num">9.</span>Project Structure</h2>
+  <pre><code>intelliknow-kms/
+├── app/                    # FastAPI backend
+│   ├── bots/               # Telegram (long-poll via proxy) + Teams adapters
+│   ├── core/               # Orchestrator (classify → route) + data models
+│   ├── kb/                 # Loaders, processor pipeline, SQLite store, FAISS search
+│   ├── ai/                 # DashScope client + prompt templates
+│   ├── rag/                # RAG generator with citations
+│   ├── security/           # Encrypted credential store + log redaction
+│   ├── analytics/          # Query log, metrics, CSV export
+│   ├── monitoring/         # CloudWatch publisher with local buffering
+│   └── api/                # Admin REST endpoints
+├── admin_ui/               # Streamlit app (5 screens)
+├── tests/                  # unit / properties / integration
+├── docs/                   # ARCHITECTURE.md · HLD.md · LLD.md · AI_USAGE_REFLECTION.md
+├── scripts/                # CloudWatch alarm setup, demo seed
+├── samples/                # Sample knowledge documents (incl. embedded-table PDF)
+├── docker-compose.yml
+└── Makefile</code></pre>
+</section>
+
+<section class="card">
+  <h2><span class="num">10.</span>Operations Notes</h2>
+  <ul>
+    <li><strong>Persistence</strong> — SQLite, FAISS indexes, uploads, and credentials live under <code>/data</code> (host bind mount) and survive container restarts, recreation, and image updates.</li>
+    <li><strong>Auto-recovery</strong> — all services use <code>restart: unless-stopped</code>; containers come back within 5 minutes of an instance reboot and within 60 seconds of an unexpected exit.</li>
+    <li><strong>Monitoring resilience</strong> — if CloudWatch is unreachable, metrics and logs buffer locally under <code>/data/logbuffer</code> and resend on the next cycle; query processing is never interrupted.</li>
+    <li><strong>Security</strong> — no credentials in source code or version control; encrypted at rest; masked in the UI; redacted from logs, error messages, and stack traces.</li>
+  </ul>
+</section>
+
+<footer>
+  IntelliKnow KMS · Built with FastAPI, Streamlit, FAISS, and Aliyun Tongyi Qwen-Max · Deployed on AWS China
+</footer>
+
+</div>
+</body>
+</html>

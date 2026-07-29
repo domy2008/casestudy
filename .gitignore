@@ -1,0 +1,29 @@
+# Credentials and environment — never commit
+.env
+.env.*
+*.enc
+credentials/
+
+# Runtime data
+data/
+*.db
+*.sqlite3
+/faiss/
+uploads/
+logbuffer/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+build/
+dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

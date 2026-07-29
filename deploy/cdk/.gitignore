@@ -1,0 +1,6 @@
+.venv/
+cdk.out/
+*.template.json
+node_modules/
+package.json
+package-lock.json

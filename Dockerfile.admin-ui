@@ -1,0 +1,23 @@
+# IntelliKnow KMS — Streamlit admin UI container (5 screens).
+# Talks to the `app` container over its REST API; holds no data of its own.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /srv/intelliknow
+
+# The UI only needs a small subset of the pinned dependencies.
+COPY requirements.txt .
+RUN pip install $(grep -E '^(streamlit|httpx)==' requirements.txt)
+
+COPY admin_ui/ ./admin_ui/
+
+EXPOSE 8501
+
+# Headless mode: no browser auto-open, suitable for a server deployment.
+CMD ["python", "-m", "streamlit", "run", "admin_ui/Home.py", \
+     "--server.port", "8501", "--server.address", "0.0.0.0", \
+     "--server.headless", "true"]
