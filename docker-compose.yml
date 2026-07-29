@@ -57,6 +57,10 @@ services:
     environment:
       # The Streamlit UI reaches the backend over the compose network.
       API_BASE_URL: http://app:8000
+      # pyarrow's bundled mimalloc allocator segfaults under Streamlit's
+      # DataFrame→Arrow conversion (observed SIGSEGV in libarrow mi_malloc
+      # on Amazon Linux 2023); the system allocator is stable.
+      ARROW_DEFAULT_MEMORY_POOL: system
     ports:
       - "8501:8501"   # Admin UI — restrict via security group to admin IPs
     depends_on:
