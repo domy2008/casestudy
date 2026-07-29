@@ -335,22 +335,12 @@ def render_sidebar_nav(active_key: str) -> None:
     Args:
         active_key: The :attr:`Screen.key` of the currently displayed screen.
     """
-    import streamlit as st
-
     # Streamlit's built-in multipage navigation (auto-generated from the files
-    # in ``pages/``) is the single functional menu. We intentionally do NOT
-    # render a second per-screen list here — doing so produced a duplicate
-    # sidebar menu. The branding header links back to the Dashboard (Home) in
-    # the same tab so clicking it always responds with a navigation.
-    with st.sidebar:
-        st.markdown(
-            '<a href="/" target="_self" style="text-decoration:none">'
-            f'<h3 style="color:{NEUTRAL["text"]};margin:0 0 2px 0">'
-            "IntelliKnow KMS</h3>"
-            f'<p style="color:{NEUTRAL["muted"]};font-size:0.85rem;margin:0">'
-            "Gen AI Knowledge Management</p></a>",
-            unsafe_allow_html=True,
-        )
+    # in ``pages/``) is the single functional menu. We intentionally render
+    # nothing extra here: an earlier custom per-screen list produced a
+    # duplicate menu, and a later branding header was mistaken for a dead
+    # menu item, so the sidebar now carries only the native page links.
+    del active_key  # Unused; kept for the pages' existing call signature.
 
 
 # ---------------------------------------------------------------------------
