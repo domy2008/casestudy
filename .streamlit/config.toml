@@ -1,0 +1,30 @@
+# Streamlit runtime configuration for the IntelliKnow KMS Admin UI.
+#
+# These settings improve stability and responsiveness, especially in the
+# AWS China deployment where outbound access to non-China endpoints is
+# restricted.
+
+[browser]
+# Disable usage-stats telemetry. Streamlit otherwise pings a US endpoint on
+# startup/interaction which is unreachable from AWS China and stalls the app.
+gatherUsageStats = false
+
+[server]
+# Run without a local browser; the UI is accessed remotely.
+headless = true
+# No source-file watching in production — avoids needless reruns/overhead.
+fileWatcherType = "none"
+runOnSave = false
+# Keep the websocket connection resilient over a plain-HTTP public endpoint.
+enableWebsocketCompression = true
+enableXsrfProtection = true
+# Cap upload size to match the backend's 50 MB document limit.
+maxUploadSize = 50
+
+[client]
+# Surface errors inline so issues are visible during testing.
+showErrorDetails = true
+
+[theme]
+# Light, neutral base consistent with the admin UI design.
+base = "light"
