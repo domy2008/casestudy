@@ -318,33 +318,67 @@ app = FastAPI(
 app.include_router(admin_router)
 
 
-def _document_processor_dependency(
-    conn: sqlite3.Connection = Depends(get_connection),
-):
-    """Provide a :class:`DocumentProcessor` bound to the per-request connection.
+class _BackgroundDocumentProcessor:
+    """Runs document ingestion on its own per-task SQLite connection.
 
-    Uploads/updates schedule real background ingestion. The processor is built
-    over the request's own connection (thread-safe under uvicorn's threadpool)
-    and the shared DashScope client, so it never touches the background
-    ``app_conn``.
+    Document processing is scheduled via FastAPI ``BackgroundTasks``, which run
+    on the event-loop thread — a *different* thread from the worker-threadpool
+    thread that served the (sync) request. A SQLite connection may only be used
+    on the thread that created it, so the processor must NOT reuse the request
+    connection. This wrapper therefore opens a fresh ``check_same_thread=False``
+    connection inside :meth:`process` (executed on the background task's own
+    thread), runs the real :class:`~app.kb.processor.DocumentProcessor` over it,
+    and closes it when done. The uploaded ``documents`` row (already committed
+    by the request connection) is visible to the fresh connection via WAL.
 
     Args:
-        conn: The per-request SQLite connection from ``get_connection``.
+        settings: The active settings (database path, FAISS dir).
+        client: The shared DashScope client (safe to share; it is stateless
+            per call and does its own async I/O).
+    """
+
+    def __init__(self, settings: Settings, client) -> None:
+        self._settings = settings
+        self._client = client
+
+    async def process(self, document_id: int) -> None:
+        """Open a task-local connection and run the ingestion pipeline."""
+        from app.kb.processor import DocumentProcessor
+        from app.kb.search import SearchIndex
+
+        conn = sqlite3.connect(
+            str(self._settings.db_path), check_same_thread=False
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            processor = DocumentProcessor(
+                conn,
+                self._client,
+                settings=self._settings,
+                search_index=SearchIndex(conn, self._settings),
+            )
+            await processor.process(document_id)
+        finally:
+            conn.close()
+
+
+def _document_processor_dependency():
+    """Provide a background-safe document processor for uploads/updates.
+
+    Returns a :class:`_BackgroundDocumentProcessor` that opens its own
+    connection inside each ``process`` call, so scheduled ingestion never
+    reuses a request or app connection across threads.
 
     Returns:
-        A ready :class:`DocumentProcessor`, or ``None`` if the client is not
-        yet built (before startup completes).
+        A :class:`_BackgroundDocumentProcessor`, or ``None`` before the shared
+        DashScope client has been built (i.e. before startup completes).
     """
-    from app.kb.processor import DocumentProcessor
-    from app.kb.search import SearchIndex
-
     settings = getattr(app.state, "settings", None) or get_settings()
     client = getattr(app.state, "dashscope_client", None)
     if client is None:
         return None
-    return DocumentProcessor(
-        conn, client, settings=settings, search_index=SearchIndex(conn, settings)
-    )
+    return _BackgroundDocumentProcessor(settings, client)
 
 
 def _connectivity_checker_dependency():
