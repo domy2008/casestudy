@@ -340,10 +340,17 @@ def render_sidebar_nav(active_key: str) -> None:
     # Streamlit's built-in multipage navigation (auto-generated from the files
     # in ``pages/``) is the single functional menu. We intentionally do NOT
     # render a second per-screen list here — doing so produced a duplicate
-    # sidebar menu. We only add a small branding header above the native nav.
+    # sidebar menu. The branding header links back to the Dashboard (Home) in
+    # the same tab so clicking it always responds with a navigation.
     with st.sidebar:
-        st.markdown("### IntelliKnow KMS")
-        st.caption("Gen AI Knowledge Management")
+        st.markdown(
+            '<a href="/" target="_self" style="text-decoration:none">'
+            f'<h3 style="color:{NEUTRAL["text"]};margin:0 0 2px 0">'
+            "IntelliKnow KMS</h3>"
+            f'<p style="color:{NEUTRAL["muted"]};font-size:0.85rem;margin:0">'
+            "Gen AI Knowledge Management</p></a>",
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------
