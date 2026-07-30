@@ -1,0 +1,21 @@
+Zhilian Tech Co., Ltd. - IT Support FAQ (2024, English Edition)
+
+Q: How do I contact the IT helpdesk?
+A: Extension 8100 or it-helpdesk@zhilian.example.com, weekdays 9:00-18:00.
+   Standard ticket response time is 4 hours.
+
+Q: I forgot my domain account password. What should I do?
+A: Reset it on the self-service password portal. At most 3 resets per day.
+
+Q: How long can a VPN session last?
+A: A single VPN session lasts at most 12 hours. Download the client from the
+   internal software center and sign in with domain account + dynamic token.
+   Never share your VPN account with anyone.
+
+Q: How long can I book a meeting room for?
+A: 2 hours maximum per booking. A room not used within 15 minutes of the
+   start time is automatically released.
+
+Q: I lost my employee badge.
+A: Report the loss at the front desk (extension 8000). Replacement costs
+   20 CNY and is issued within 1 business day.
