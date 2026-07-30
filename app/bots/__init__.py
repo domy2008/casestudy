@@ -1,1 +1,1 @@
-"""Frontend integration adapters (Telegram long-polling, Teams webhook)."""
+"""Frontend integration adapters (Telegram long-polling, Teams + WhatsApp webhooks)."""

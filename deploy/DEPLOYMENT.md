@@ -49,7 +49,7 @@ docker compose ps        # app, admin-ui, cloudwatch-agent all Up
   container within 60 seconds (Req 12.5) and brings the stack back after an
   OS boot (Req 12.3).
 - Admin UI: `http://<instance>:8501` (restrict by security group).
-- Enter Telegram / Teams / DashScope credentials via the Frontend Integration
+- Enter Telegram / Teams / WhatsApp / DashScope credentials via the Frontend Integration
   screen — they are stored Fernet-encrypted under `/data/credentials/`.
 
 ## 4. Provision CloudWatch alarms (once per environment)
@@ -84,6 +84,7 @@ environment-dependent and are verified manually, not by the automated suite.
 - [ ] Credentials saved via the UI appear masked (last ≤4 chars) on re-read
 - [ ] Telegram: send a message to the bot → cited answer arrives (proxy path works)
 - [ ] Teams: send a message to the bot → cited answer arrives (inbound webhook works)
+- [ ] WhatsApp: send a message to the test number → cited answer arrives (webhook + proxy path works). See `deploy/WHATSAPP_SETUP.md`
 - [ ] Upload a sample document → status transitions Pending → Processed and it becomes searchable
 - [ ] **Restart recovery (Req 12.5):** `docker kill intelliknow-kms-app-1` → container is back `Up` within 60 s and answers queries
 - [ ] **Boot recovery (Req 12.3):** `sudo reboot` → all three containers `Up` within 5 min of boot without manual action

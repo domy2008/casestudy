@@ -86,15 +86,16 @@ class CredentialField:
     help_text: str = ""
 
 
-#: The Frontend_Tools shown on this screen, in display order. Only Telegram and
-#: Teams are Frontend_Tools with connectivity/error tracking (DashScope is a
-#: credential-only integration and is configured elsewhere).
-TOOLS: tuple[str, ...] = ("telegram", "teams")
+#: The Frontend_Tools shown on this screen, in display order. Telegram, Teams,
+#: and WhatsApp are Frontend_Tools with connectivity/error tracking (DashScope
+#: is a credential-only integration and is configured elsewhere).
+TOOLS: tuple[str, ...] = ("telegram", "teams", "whatsapp")
 
 #: Display titles for each tool.
 TOOL_TITLES: dict[str, str] = {
     "telegram": "Telegram",
     "teams": "Microsoft Teams",
+    "whatsapp": "WhatsApp",
 }
 
 #: The credential fields each tool exposes. These mirror the backend credential
@@ -123,6 +124,27 @@ TOOL_FIELDS: dict[str, tuple[CredentialField, ...]] = {
             "App Password",
             secret=True,
             help_text="The Bot Framework app client secret (≥8 characters).",
+        ),
+    ),
+    "whatsapp": (
+        CredentialField(
+            "access_token",
+            "Access Token",
+            secret=True,
+            help_text="Meta Graph API system-user access token (≥20 chars).",
+        ),
+        CredentialField(
+            "phone_number_id",
+            "Phone Number ID",
+            secret=False,
+            help_text="The WhatsApp Business phone number ID (numeric).",
+        ),
+        CredentialField(
+            "verify_token",
+            "Verify Token",
+            secret=True,
+            help_text="Your chosen webhook verify token (≥8 chars); must match "
+            "the value entered in the Meta App webhook configuration.",
         ),
     ),
 }

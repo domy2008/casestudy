@@ -97,7 +97,7 @@ __all__ = [
 
 # Frontend_Tools that support connectivity testing and status/error tracking
 # (the credential-only "dashscope" integration is not a Frontend_Tool).
-FRONTEND_TOOLS: frozenset[str] = frozenset({"telegram", "teams"})
+FRONTEND_TOOLS: frozenset[str] = frozenset({"telegram", "teams", "whatsapp"})
 
 # Hard cap for an end-to-end connectivity check (Req 3.2, 3.5).
 TEST_TIMEOUT_SECONDS: float = 30.0

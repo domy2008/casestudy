@@ -40,6 +40,14 @@ VALID_POOL = {
         ],
         "app_password": ["s3cretpassword", "anotherStr0ngPass"],
     },
+    "whatsapp": {
+        "access_token": [
+            "EAAexampleWhatsAppAccessToken0123456789",
+            "EAAanotherWhatsAppAccessTokenABCDEFGHIJ",
+        ],
+        "phone_number_id": ["123456789012345", "987654321098765"],
+        "verify_token": ["my-verify-token", "another-verify-token"],
+    },
     "dashscope": {
         "api_key": ["sk-abcdef0123456789ABCDEF", "sk-ZZZZ0000111122223333"]
     },

@@ -1,7 +1,8 @@
 """Startup credential loading for the IntelliKnow KMS.
 
 Requirement 11.4 requires that on startup the system load the Frontend_Tool
-API keys (Telegram, Teams) and the DashScope AK/SK from the Credential_Store as
+API keys (Telegram, Teams, WhatsApp) and the DashScope AK/SK from the
+Credential_Store as
 the *primary* credential source. Requirement 11.5 requires that any credential
 that is missing or cannot be loaded is reported by field *name* only (never its
 value) and that the dependent integration is marked unavailable.
@@ -49,7 +50,7 @@ _logger = logging.getLogger(__name__)
 
 # Frontend_Tool integrations that surface as rows in the `integrations` table
 # and can be marked available/unavailable (Req 11.5).
-FRONTEND_TOOLS: tuple[str, ...] = ("telegram", "teams")
+FRONTEND_TOOLS: tuple[str, ...] = ("telegram", "teams", "whatsapp")
 
 # The AI integration every frontend tool depends on to answer queries. It is
 # not a frontend tool itself, so it has no `integrations` row, but its absence

@@ -1,7 +1,8 @@
 """Credential storage, validation, and masking for the IntelliKnow KMS.
 
-Integration credentials (Telegram bot token, Teams app id/password, DashScope
-API key) are persisted as a single Fernet-encrypted JSON document on the
+Integration credentials (Telegram bot token, Teams app id/password, WhatsApp
+Cloud API access token/phone number id/verify token, DashScope API key) are
+persisted as a single Fernet-encrypted JSON document on the
 persistent volume (``settings.credentials_path``, i.e.
 ``/data/credentials/credentials.enc`` in production). The Fernet master key is
 supplied via the ``CREDENTIAL_MASTER_KEY`` environment variable, surfaced
@@ -50,6 +51,14 @@ __all__ = [
 CREDENTIAL_SCHEMAS: dict[str, dict[str, str]] = {
     "telegram": {"bot_token": r"^\d+:[A-Za-z0-9_-]{30,}$"},
     "teams": {"app_id": r"^[0-9a-fA-F-]{36}$", "app_password": r"^\S{8,}$"},
+    "whatsapp": {
+        # Meta Graph API access token (long-lived system-user token).
+        "access_token": r"^\S{20,}$",
+        # WhatsApp Business phone number id (numeric).
+        "phone_number_id": r"^\d{5,}$",
+        # Admin-chosen token echoed back during webhook verification.
+        "verify_token": r"^\S{8,}$",
+    },
     "dashscope": {"api_key": r"^sk-[A-Za-z0-9]{16,}$"},
 }
 

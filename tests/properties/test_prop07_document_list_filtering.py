@@ -97,6 +97,8 @@ def test_document_list_returns_exactly_matching_documents(
             data_dir=Path(tmp),
             dashscope_api_key="",
             telegram_proxy_url="",
+            whatsapp_proxy_url="",
+            teams_tenant_id="",
             credential_master_key="",
             aws_region="cn-north-1",
         )

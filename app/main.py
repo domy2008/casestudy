@@ -53,6 +53,7 @@ from app.bots.dispatcher import QueryDispatcher
 from app.bots.monitor import IntegrationStatusMonitor
 from app.bots.teams import TeamsAdapter
 from app.bots.telegram import TelegramAdapter, TelegramConfigError
+from app.bots.whatsapp import WhatsAppAdapter
 from app.config import Settings, get_settings
 from app.core.models import ConnectivityResult, GeneratedResponse, QueryContext
 from app.db import bootstrap
@@ -227,12 +228,21 @@ async def lifespan(app: FastAPI):
     teams_adapter = TeamsAdapter(
         credential_store=credential_store, settings=settings
     )
+    whatsapp_adapter = WhatsAppAdapter(
+        credential_store=credential_store,
+        settings=settings,
+        error_log=error_log_repo,
+    )
 
     telegram_dispatcher = QueryDispatcher(
         orchestrator, telegram_adapter, error_log=error_log_repo
     )
     monitor = IntegrationStatusMonitor(
-        {"telegram": telegram_adapter, "teams": teams_adapter},
+        {
+            "telegram": telegram_adapter,
+            "teams": teams_adapter,
+            "whatsapp": whatsapp_adapter,
+        },
         integration_repo,
         error_log_repo,
     )
@@ -243,6 +253,7 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = orchestrator
     app.state.telegram_adapter = telegram_adapter
     app.state.teams_adapter = teams_adapter
+    app.state.whatsapp_adapter = whatsapp_adapter
     app.state.monitor = monitor
     app.state.connectivity_checker = _MonitorConnectivityChecker(monitor)
 
@@ -299,6 +310,8 @@ async def lifespan(app: FastAPI):
             await telegram_adapter.aclose()
         with contextlib.suppress(Exception):
             await teams_adapter.aclose()
+        with contextlib.suppress(Exception):
+            await whatsapp_adapter.aclose()
         with contextlib.suppress(Exception):
             app_conn.close()
 
@@ -468,5 +481,69 @@ async def teams_webhook(request: Request) -> dict:
         )
     except Exception:  # noqa: BLE001 - never let a handler error break the webhook
         logger.exception("Teams webhook handling failed")
+
+    return {"status": "ok"}
+
+
+@app.get("/webhooks/whatsapp")
+async def whatsapp_webhook_verify(request: Request):
+    """Answer Meta's WhatsApp webhook subscription challenge (GET).
+
+    Meta verifies the webhook by calling with ``hub.mode=subscribe``,
+    ``hub.verify_token``, and ``hub.challenge``. The challenge is echoed back
+    only when the token matches the stored ``verify_token``; otherwise 403.
+    """
+    from fastapi.responses import PlainTextResponse
+
+    adapter: WhatsAppAdapter | None = getattr(app.state, "whatsapp_adapter", None)
+    params = request.query_params
+    challenge = (
+        adapter.verify_webhook(
+            params.get("hub.mode"),
+            params.get("hub.verify_token"),
+            params.get("hub.challenge"),
+        )
+        if adapter is not None
+        else None
+    )
+    if challenge is None:
+        return PlainTextResponse("verification failed", status_code=403)
+    return PlainTextResponse(challenge)
+
+
+@app.post("/webhooks/whatsapp")
+async def whatsapp_webhook(request: Request) -> dict:
+    """Handle a WhatsApp Cloud API inbound notification (Req 2.1).
+
+    Parses the notification body and hands it to the WhatsApp adapter, which
+    applies the shared inbound gate, runs valid queries through the
+    Orchestrator, and replies through the Outbound_Proxy. Any handler error is
+    contained so Meta always receives a 200 acknowledgement (a non-200 would
+    trigger Meta redelivery storms).
+    """
+    try:
+        notification = await request.json()
+    except Exception:  # noqa: BLE001 - a malformed body is acknowledged, not fatal
+        notification = {}
+
+    adapter: WhatsAppAdapter | None = getattr(app.state, "whatsapp_adapter", None)
+    orchestrator = getattr(app.state, "orchestrator", None)
+    if adapter is None or orchestrator is None:
+        return {"status": "ok"}
+
+    async def _dispatch(conversation_ref: dict, text: str) -> GeneratedResponse:
+        ctx = QueryContext(
+            query_id=str(uuid.uuid4()),
+            tool="whatsapp",
+            conversation_ref=conversation_ref,
+            text=text,
+            received_at=datetime.now(),
+        )
+        return await orchestrator.handle_query(ctx)
+
+    try:
+        await adapter.handle_notification(notification, _dispatch)
+    except Exception:  # noqa: BLE001 - never let a handler error break the webhook
+        logger.exception("WhatsApp webhook handling failed")
 
     return {"status": "ok"}

@@ -27,6 +27,11 @@ VALID_TEAMS = {
     "app_id": "12345678-1234-1234-1234-1234567890ab",
     "app_password": "s3cr3tPassword!",
 }
+VALID_WHATSAPP = {
+    "access_token": "EAAfakeWhatsAppAccessToken0123456789",
+    "phone_number_id": "123456789012345",
+    "verify_token": "my-verify-token",
+}
 
 
 @pytest.fixture()
@@ -92,6 +97,7 @@ def test_all_credentials_present_marks_all_available_and_seeds_filter(env):
     store = CredentialStore(env)
     store.save("telegram", VALID_TELEGRAM)
     store.save("teams", VALID_TEAMS)
+    store.save("whatsapp", VALID_WHATSAPP)
     store.save("dashscope", VALID_DASHSCOPE)
 
     integration_repo = IntegrationRepository(conn)
@@ -103,6 +109,7 @@ def test_all_credentials_present_marks_all_available_and_seeds_filter(env):
     assert result.unavailable == set()
     assert integration_repo.get("telegram")["active"] == 1
     assert integration_repo.get("teams")["active"] == 1
+    assert integration_repo.get("whatsapp")["active"] == 1
 
     # The filter now redacts the loaded secret values.
     assert filt.redact(VALID_TELEGRAM["bot_token"]) == "***"
@@ -117,6 +124,7 @@ def test_missing_dashscope_makes_all_frontends_unavailable(env, caplog):
     store = CredentialStore(env)
     store.save("telegram", VALID_TELEGRAM)
     store.save("teams", VALID_TEAMS)
+    store.save("whatsapp", VALID_WHATSAPP)
     # DashScope intentionally not saved.
 
     integration_repo = IntegrationRepository(conn)
@@ -126,8 +134,9 @@ def test_missing_dashscope_makes_all_frontends_unavailable(env, caplog):
 
     assert "dashscope" in result.missing
     assert result.missing["dashscope"] == ["api_key"]
-    assert result.unavailable == {"telegram", "teams"}
+    assert result.unavailable == {"telegram", "teams", "whatsapp"}
     assert integration_repo.get("telegram")["active"] == 0
     assert integration_repo.get("teams")["active"] == 0
+    assert integration_repo.get("whatsapp")["active"] == 0
 
     conn.close()

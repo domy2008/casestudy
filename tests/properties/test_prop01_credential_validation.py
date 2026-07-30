@@ -37,6 +37,11 @@ VALID_EXAMPLES = {
         "app_id": "12345678-1234-1234-1234-1234567890ab",
         "app_password": "s3cretpassword",
     },
+    "whatsapp": {
+        "access_token": "EAAexampleWhatsAppAccessToken0123456789",
+        "phone_number_id": "123456789012345",
+        "verify_token": "my-verify-token",
+    },
     "dashscope": {"api_key": "sk-abcdef0123456789ABCDEF"},
 }
 

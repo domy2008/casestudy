@@ -1,8 +1,8 @@
 # IntelliKnow KMS
 
-A Gen AI-powered Knowledge Management System delivered as a production-ready MVP. End users ask questions from **Telegram** or **Microsoft Teams** and receive concise, **cited** answers generated with Retrieval-Augmented Generation (RAG) over an admin-managed document knowledge base. An admin runs the entire system from a five-screen web UI.
+A Gen AI-powered Knowledge Management System delivered as a production-ready MVP. End users ask questions from **Telegram**, **Microsoft Teams**, or **WhatsApp** and receive concise, **cited** answers generated with Retrieval-Augmented Generation (RAG) over an admin-managed document knowledge base. An admin runs the entire system from a five-screen web UI.
 
-- Multi-frontend intake and delivery: Telegram (long-poll via an outbound proxy) and Microsoft Teams (Bot Framework webhook).
+- Multi-frontend intake and delivery: Telegram (long-poll via an outbound proxy), Microsoft Teams (Bot Framework webhook), and WhatsApp (Meta Cloud API webhook + proxied Graph API replies).
 - Document-driven knowledge base with AI parsing, structuring (including embedded tables), and semantic search.
 - An orchestrator that classifies query intent and routes to the right knowledge domain, falling back to a General space below a configurable confidence threshold.
 - RAG responses with citations, formatted per frontend tool.
@@ -63,6 +63,7 @@ Variables (see [`.env.example`](.env.example) and [`app/config.py`](app/config.p
 |---|---|---|
 | `CREDENTIAL_MASTER_KEY` | Yes | Fernet key encrypting `/data/credentials/credentials.enc`. Generate once (below) and keep it safe — losing it makes the credential store unreadable. |
 | `TELEGRAM_PROXY_URL` | Yes (for Telegram) | HTTPS forward proxy used **only** by the Telegram client, since Telegram is unreachable from AWS China. DashScope and Teams traffic goes direct. |
+| `WHATSAPP_PROXY_URL` | Yes (for WhatsApp) | HTTPS forward proxy used **only** by the WhatsApp client, since the Meta Graph API (`graph.facebook.com`) is unreachable from AWS China. May reuse the Telegram proxy. |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` | Yes (for CloudWatch) | AWS China region: `cn-north-1` (Beijing) or `cn-northwest-1` (Ningxia). |
 | `DASHSCOPE_API_KEY` | Optional | Dev/local fallback API key. At runtime the Credential Store (configured in the Admin UI) is the primary source; this env var is a convenience for local use. |
 
@@ -102,7 +103,7 @@ Every service uses `restart: unless-stopped`, so a crashed container comes back 
 
 ### 5. Configure credentials in the Admin UI
 
-Open the Admin UI at `http://<instance>:8501` and go to **Frontend Integration**. Enter and save your Telegram, Teams, and DashScope credentials there. They are validated, then stored **Fernet-encrypted** under `/data/credentials/` — never in source or version control. Re-reading shows each value masked (last ≤4 characters).
+Open the Admin UI at `http://<instance>:8501` and go to **Frontend Integration**. Enter and save your Telegram, Teams, WhatsApp, and DashScope credentials there. They are validated, then stored **Fernet-encrypted** under `/data/credentials/` — never in source or version control. Re-reading shows each value masked (last ≤4 characters).
 
 ### 6. Provision CloudWatch alarms (once per environment)
 
@@ -125,6 +126,7 @@ This creates the `intelliknow-alarms` SNS topic and three alarm groups (query la
 - Saved credentials appear masked on re-read.
 - Telegram: message the bot and receive a cited answer (confirms the proxy path).
 - Teams: message the bot and receive a cited answer (confirms the inbound webhook).
+- WhatsApp: message the test number and receive a cited answer (confirms the webhook + proxied Graph API path).
 - Upload a document and watch its status move Pending → Processed, then query it.
 
 The full manual verification checklist (restart recovery, boot recovery, volume persistence, proxy-failure handling, CloudWatch datapoints and alarm firing) is in [`deploy/DEPLOYMENT.md`](deploy/DEPLOYMENT.md).
@@ -149,7 +151,18 @@ The Bot Connector service is reachable from AWS China, so Teams uses the standar
 3. In the Admin UI → **Frontend Integration**, save the Teams App ID and App Password.
 4. The backend receives Bot Framework activities at `POST /webhooks/teams` (validated with the app credentials) and replies via the Bot Connector service URL from the activity. Responses use Teams-native Markdown (bullet lists, bold citations) within Teams limits.
 
-Both integrations show a live connection status (Connected / Error / Disconnected) and an end-to-end **Test** button on the Frontend Integration screen, plus the 50 most recent integration error log entries.
+### WhatsApp (Meta Cloud API webhook + proxied replies)
+
+Inbound messages arrive as Meta webhook notifications (WhatsApp has no long-polling mode), while outbound replies call the Graph API — which is unreachable from AWS China, so replies are routed through `WHATSAPP_PROXY_URL`.
+
+1. Create a Meta app (Business type) at developers.facebook.com and add the **WhatsApp** product; note the **Phone Number ID** from API Setup and generate a long-lived **access token** via a Business system user (`whatsapp_business_messaging` + `whatsapp_business_management`).
+2. Register your phone as a test recipient (API Setup → To list) and verify the code delivered to your WhatsApp.
+3. In the Admin UI → **Frontend Integration**, save the Access Token, Phone Number ID, and a self-chosen Verify Token (≥8 chars). Save these **before** configuring the webhook — verification reads the stored token.
+4. In the Meta app → WhatsApp → Configuration → Webhook, set the callback URL to `https://<your-host>/webhooks/whatsapp` with the same verify token, then subscribe the **messages** field.
+5. Ensure the WABA is subscribed to your app (`POST /{waba_id}/subscribed_apps`) — the dashboard flow may skip this, in which case webhook verification succeeds but no messages are delivered.
+6. Responses are plain text with a `Sources:` citation footer within WhatsApp's 4096-character limit; sends retry on failure and on proxy connectivity errors, mirroring Telegram.
+
+All three integrations show a live connection status (Connected / Error / Disconnected) and an end-to-end **Test** button on the Frontend Integration screen, plus the 50 most recent integration error log entries.
 
 ## Testing
 
@@ -191,7 +204,7 @@ intelliknow-kms/
 │   ├── main.py               # App assembly, startup/shutdown, background tasks
 │   ├── config.py             # Env-derived settings + persistent-storage paths
 │   ├── db.py                 # SQLite bootstrap / schema
-│   ├── bots/                 # Frontend integration: telegram.py, teams.py, dispatcher.py, monitor.py
+│   ├── bots/                 # Frontend integration: telegram.py, teams.py, whatsapp.py, dispatcher.py, monitor.py
 │   ├── core/                 # Orchestrator + core data models
 │   ├── kb/                   # Loaders, document processor, SQLite store, FAISS search
 │   ├── ai/                   # DashScope client + prompt templates

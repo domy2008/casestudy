@@ -169,14 +169,14 @@ def test_status_error_on_failed_test() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_screen_targets_the_two_frontend_tools() -> None:
-    """The screen manages exactly Telegram and Teams, with the right key."""
-    assert page.TOOLS == ("telegram", "teams")
+def test_screen_targets_the_frontend_tools() -> None:
+    """The screen manages Telegram, Teams, and WhatsApp, with the right key."""
+    assert page.TOOLS == ("telegram", "teams", "whatsapp")
     assert page.SCREEN_KEY == "frontend_integration"
     assert page.ERROR_LOG_LIMIT == 50
 
 
-@pytest.mark.parametrize("tool", ["telegram", "teams"])
+@pytest.mark.parametrize("tool", ["telegram", "teams", "whatsapp"])
 def test_every_tool_has_a_title(tool: str) -> None:
     """Each managed tool has a human-readable display title."""
     assert page.TOOL_TITLES[tool]
