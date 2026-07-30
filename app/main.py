@@ -49,6 +49,7 @@ from app.api.admin import (
     get_document_processor,
 )
 from app.api.admin import router as admin_router
+from app.api.chat import chat_router
 from app.bots.dispatcher import QueryDispatcher
 from app.bots.monitor import IntegrationStatusMonitor
 from app.bots.teams import TeamsAdapter
@@ -329,6 +330,7 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 app.include_router(admin_router)
+app.include_router(chat_router)
 
 
 class _BackgroundDocumentProcessor:
