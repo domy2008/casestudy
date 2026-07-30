@@ -11,7 +11,7 @@ Compose, with CloudWatch monitoring and SNS alarm notifications.
 | AWS China account | Separate partition (`aws-cn`) from global AWS; needs ICP-related account verification for public web exposure |
 | EC2 instance | Amazon Linux 2023, `t3.medium`+ recommended (FAISS + embeddings in memory), EBS gp3 volume ≥ 20 GB |
 | IAM instance profile | `cloudwatch:PutMetricData`, `logs:CreateLogGroup/CreateLogStream/PutLogEvents`; for the alarm script additionally `cloudwatch:PutMetricAlarm`, `sns:CreateTopic`, `sns:Subscribe` |
-| Security group | Inbound: 443/80 → 8000 only if Teams webhook is exposed publicly (behind HTTPS); 8501 restricted to admin IP ranges; SSH from admin IPs. Outbound: 443 open |
+| Security group | Inbound: 443/80 (nginx: webhooks + cert renewal) and 22 (SSH) only. Ports 8000/8501 are NOT exposed — the admin API and Admin UI are reached exclusively via SSH tunnel. Outbound: 443 open |
 | Outbound proxy | HTTPS forward proxy reachable from the instance, deployed in a region with Telegram connectivity (e.g., a small instance in an overseas region). Only Telegram traffic uses it (Req 12.2) |
 | DashScope API key | Aliyun DashScope is directly reachable from AWS China — no proxy needed |
 | Teams webhook HTTPS | Bot Framework requires an HTTPS endpoint. Terminate TLS in front of port 8000 (ALB + ACM cert, or nginx + certificate on the host) |
@@ -48,7 +48,27 @@ docker compose ps        # app, admin-ui, cloudwatch-agent all Up
 - `restart: unless-stopped` on every service: dockerd restarts a crashed
   container within 60 seconds (Req 12.5) and brings the stack back after an
   OS boot (Req 12.3).
-- Admin UI: `http://<instance>:8501` (restrict by security group).
+- Admin UI (public, for customers): `https://<domain>/admin/` — nginx
+  terminates TLS and enforces **HTTP basic auth** (`/etc/nginx/.htpasswd-kms`),
+  proxying to Streamlit on `127.0.0.1:8501` with websocket upgrade headers.
+  Streamlit must run with `server.baseUrlPath = "admin"` in
+  `.streamlit/config.toml`. Rotate credentials with:
+
+  ```bash
+  echo "kmsadmin:$(openssl passwd -apr1 '<new-password>')" | sudo tee /etc/nginx/.htpasswd-kms
+  ```
+
+- Admin REST API: **never public** (nginx only proxies
+  `/webhooks/{teams,whatsapp}`, `/health`, and `/admin/`; ports 8000/8501 are
+  closed in the security group). For scripts (e.g. `upload_corpus.py`) use an
+  SSH tunnel:
+
+  ```bash
+  ssh -i ~/.ssh/intelliknow-demo.pem -N \
+      -L 8501:localhost:8501 -L 8000:localhost:8000 ec2-user@<instance>
+  # Admin UI:  http://localhost:8501/admin/
+  # Admin API: http://localhost:8000
+  ```
 - Enter Telegram / Teams / WhatsApp / DashScope credentials via the Frontend Integration
   screen — they are stored Fernet-encrypted under `/data/credentials/`.
 

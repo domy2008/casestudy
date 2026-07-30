@@ -66,11 +66,13 @@ class IntelliKnowDemoStack(cdk.Stack):
             allow_all_outbound=True,
         )
         admin = ec2.Peer.ipv4(admin_cidr)
-        sg.add_ingress_rule(admin, ec2.Port.tcp(22), "SSH (admin only)")
-        sg.add_ingress_rule(admin, ec2.Port.tcp(8501), "Admin UI (admin only)")
-        # Teams Bot Framework must reach the webhook; TLS should terminate in
-        # front of this in a real deployment. Open for the demo.
-        sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(8000), "Teams webhook")
+        sg.add_ingress_rule(admin, ec2.Port.tcp(22), "SSH (admin + tunnel)")
+        # The Admin UI (8501) and admin API (8000) are intentionally NOT
+        # exposed: they are reached via SSH tunnel only. Public traffic enters
+        # through nginx on 80/443, whose vhost proxies only the bot webhooks
+        # (/webhooks/teams, /webhooks/whatsapp) and /health to port 8000.
+        sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "nginx (cert renewal + redirect)")
+        sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "nginx (bot webhooks over TLS)")
 
         # --- IAM: least-privilege role for CloudWatch metrics + logs --------
         role = iam.Role(
@@ -193,5 +195,12 @@ class IntelliKnowDemoStack(cdk.Stack):
 
         # --- Outputs --------------------------------------------------------
         cdk.CfnOutput(self, "InstancePublicIp", value=instance.instance_public_ip)
-        cdk.CfnOutput(self, "AdminUiUrl", value=f"http://{instance.instance_public_ip}:8501")
+        cdk.CfnOutput(
+            self,
+            "AdminUiAccess",
+            value=(
+                "ssh -N -L 8501:localhost:8501 -L 8000:localhost:8000 "
+                f"ec2-user@{instance.instance_public_ip} -> http://localhost:8501"
+            ),
+        )
         cdk.CfnOutput(self, "AlarmTopicArn", value=topic.topic_arn)
