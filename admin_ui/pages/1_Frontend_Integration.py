@@ -2,8 +2,8 @@
 
 This is the second screen of the Streamlit multipage app (it lives under
 ``pages/`` so Streamlit lists it in the sidebar after the Dashboard — Req 9.1).
-It lets the Admin manage the Telegram and Microsoft Teams integrations end to
-end using the shared :class:`~admin_ui.ui.components.ApiClient` against the
+It lets the Admin manage the Telegram, Microsoft Teams, and WhatsApp
+integrations end to end using the shared :class:`~admin_ui.ui.components.ApiClient` against the
 backend admin REST API:
 
 * **Masked credential forms** per Frontend_Tool with per-field validation
@@ -99,7 +99,8 @@ TOOL_TITLES: dict[str, str] = {
 }
 
 #: The credential fields each tool exposes. These mirror the backend credential
-#: schema (telegram → ``bot_token``; teams → ``app_id`` + ``app_password``) but
+#: schema (telegram → ``bot_token``; teams → ``app_id`` + ``app_password``;
+#: whatsapp → ``access_token`` + ``phone_number_id`` + ``verify_token``) but
 #: are declared here so the admin-UI container stays independent of the backend
 #: package. The backend remains the single source of truth for validation; this
 #: screen simply surfaces whatever per-field errors it returns.
@@ -406,8 +407,8 @@ def _main() -> None:
     render_sidebar_nav(SCREEN_KEY)
     section_header("Frontend Integration", module=MODULE)
     st.caption(
-        "Manage Telegram and Microsoft Teams credentials, check connectivity, "
-        "and review recent integration errors."
+        "Manage Telegram, Microsoft Teams, and WhatsApp credentials, check "
+        "connectivity, and review recent integration errors."
     )
 
     client = ApiClient()

@@ -12,8 +12,11 @@ document corpus (Req 4.4–4.10, 5.6). It provides:
 * **filters** by name, format, upload date and Intent_Space that constrain the
   list to matching documents (Req 4.6);
 * a **delete confirmation** prompt before a document is removed (Req 4.7/4.8);
-* an **Update** action that re-triggers parsing/embedding (Req 4.9); and
-* an **Intent_Space assignment** control per document (Req 5.6).
+* an **Update** action that re-triggers parsing/embedding (Req 4.9);
+* an **Intent_Space assignment** control per document (Req 5.6); and
+* a **processing progress indicator**: while any document is Pending the page
+  auto-refreshes every few seconds so the Admin watches Pending → Processed
+  without manual reloads (Req 4.4 "progress indicator for document processing").
 
 Backend contract (consumed via the shared :class:`ApiClient`):
 
@@ -99,6 +102,9 @@ UPLOAD_EXTENSIONS: tuple[str, ...] = ("pdf", "docx", "xlsx", "txt", "md", "markd
 STATUS_PROCESSED = "Processed"
 STATUS_PENDING = "Pending"
 STATUS_ERROR = "Error"
+
+#: Seconds between automatic list refreshes while documents are processing.
+PENDING_POLL_INTERVAL_S: float = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +265,22 @@ def status_display(status: Any, error_message: Any = None) -> str:
     return text
 
 
+def count_pending(documents: list[dict[str, Any]]) -> int:
+    """Count documents still being processed (status ``Pending``, Req 4.4).
+
+    Drives the processing progress indicator: while at least one document is
+    Pending, the page auto-refreshes so the Admin sees the Pending → Processed
+    (or Error) transition without manual reloads.
+
+    Args:
+        documents: Document records from ``GET /documents``.
+
+    Returns:
+        The number of documents whose status is ``Pending``.
+    """
+    return sum(1 for doc in documents if str(doc.get("status")) == STATUS_PENDING)
+
+
 def space_label_map(spaces: list[dict[str, Any]]) -> dict[int, str]:
     """Map Intent_Space ids to display names for dropdowns/labels (Req 5.6).
 
@@ -373,28 +395,45 @@ def assign_space(client: ApiClient, document_id: int, space_id: int) -> Any:
 
 
 def _render_upload(client: ApiClient, spaces_by_id: dict[int, str]) -> None:
-    """Render the drag-and-drop upload zone with a 0–100 % progress bar (Req 4.4)."""
+    """Render the 3-step upload flow: space → file → upload (Req 4.4).
+
+    The Intent_Space (catalog) is chosen FIRST so the Admin knows where the
+    document will land before picking a file. The upload outcome is stored as
+    a session flash message so it survives the post-upload rerun, and the
+    uploader key carries a nonce that is bumped on success — clearing the file
+    so it cannot be accidentally re-uploaded.
+    """
     import streamlit as st
 
     section_header("Upload a document", module=MODULE)
-    uploaded = st.file_uploader(
-        "Drag and drop a file here, or browse",
-        type=list(UPLOAD_EXTENSIONS),
-        accept_multiple_files=False,
-        help="Supported formats: PDF, DOCX, XLSX, TXT, Markdown. Max size 50 MB.",
-        key="kb_uploader",
-    )
 
+    # Outcome of the previous run's upload (survives the rerun).
+    flash = st.session_state.pop("kb_upload_flash", None)
+    if flash:
+        level, text = flash
+        (st.success if level == "success" else st.error)(text)
+
+    # Step 1 — destination catalog first, so the target is explicit.
     target_space_id: int | None = None
     if spaces_by_id:
         space_ids = list(spaces_by_id.keys())
         target_space_id = st.selectbox(
-            "Assign to Intent Space",
+            "Step 1 — Choose the Intent Space (catalog) the document belongs to",
             options=space_ids,
             format_func=lambda sid: spaces_by_id.get(sid, f"Space {sid}"),
             key="kb_upload_space",
         )
 
+    # Step 2 — pick the file. The nonce in the key lets a successful upload
+    # clear the uploader (Streamlit cannot reset a file_uploader in place).
+    nonce = int(st.session_state.get("kb_uploader_nonce", 0))
+    uploaded = st.file_uploader(
+        "Step 2 — Drag and drop the file here, or browse",
+        type=list(UPLOAD_EXTENSIONS),
+        accept_multiple_files=False,
+        help="Supported formats: PDF, DOCX, XLSX, TXT, Markdown. Max size 50 MB.",
+        key=f"kb_uploader_{nonce}",
+    )
     if uploaded is None:
         return
 
@@ -406,17 +445,29 @@ def _render_upload(client: ApiClient, spaces_by_id: dict[int, str]) -> None:
         st.error(error)
         return
 
-    st.caption(f"Ready to upload **{uploaded.name}** ({human_size(size_bytes)}).")
-    if not st.button("Upload", key="kb_upload_btn", type="primary"):
+    space_name = (
+        spaces_by_id.get(target_space_id, "General")
+        if target_space_id is not None
+        else "General"
+    )
+    st.caption(
+        f"Ready: **{uploaded.name}** ({human_size(size_bytes)}) → **{space_name}**"
+    )
+    if not st.button(
+        f"Step 3 — Upload to {space_name}", key="kb_upload_btn", type="primary"
+    ):
         return
+
+    import time
 
     fmt = detect_format(uploaded.name) or ""
     progress = st.progress(0, text="Starting upload…")
     try:
-        # Show progress climbing to just under 100 % while the transfer runs,
-        # then complete it once the backend acknowledges (Req 4.4).
-        for pct in (15, 40, 70, 90):
-            progress.progress(pct, text=f"Uploading… {pct}%")
+        # Visible 0–100 % progress (Req 4.4): brief animated climb while the
+        # transfer is prepared, the real POST at 90 %, then completion.
+        for pct in (10, 25, 45, 70, 90):
+            progress.progress(pct, text=f"Uploading '{uploaded.name}'… {pct}%")
+            time.sleep(0.15)
         upload_document(
             client,
             name=uploaded.name,
@@ -426,14 +477,23 @@ def _render_upload(client: ApiClient, spaces_by_id: dict[int, str]) -> None:
             space_id=target_space_id,
         )
         progress.progress(100, text="Upload complete (100%)")
+        time.sleep(0.4)
     except ApiError as exc:
         progress.empty()
-        st.error(f"Upload failed: {exc.message}")
-        return
+        st.session_state["kb_upload_flash"] = (
+            "error",
+            f"❌ Upload of '{uploaded.name}' FAILED: {exc.message}",
+        )
+        st.rerun()
 
-    st.success(
-        f"Uploaded '{uploaded.name}'. Status is Pending while it is processed."
+    st.session_state["kb_upload_flash"] = (
+        "success",
+        f"✅ '{uploaded.name}' uploaded to **{space_name}**. It appears below "
+        "with status Pending and turns Processed once indexing finishes "
+        "(click “Refresh status” to update).",
     )
+    st.session_state["kb_uploader_nonce"] = nonce + 1
+    st.rerun()
 
 
 def _render_filters(spaces_by_id: dict[int, str]) -> dict[str, Any]:
@@ -570,6 +630,8 @@ def _main() -> None:
     params = _render_filters(spaces_by_id)
 
     section_header("Documents", module=MODULE)
+    # A click reruns the script, re-fetching the list (Pending → Processed).
+    st.button("🔄 Refresh status", key="kb_refresh")
     try:
         documents = fetch_documents(client, params)
     except ApiError as exc:
@@ -577,13 +639,35 @@ def _main() -> None:
         return
 
     if not documents:
-        st.info("No documents match the current filters.")
+        if params:
+            st.info(
+                "No documents match the current filters — your documents may "
+                "be hidden by them. Set Format and Intent Space back to “All” "
+                "and clear the name/date filters to see everything."
+            )
+        else:
+            st.info("The knowledge base is empty. Upload a document above.")
         return
 
+    st.caption(f"Showing {len(documents)} document(s).")
     rows = [document_row(doc, spaces_by_id) for doc in documents]
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
     _render_actions(client, documents, spaces_by_id)
+
+    # Processing progress indicator (Req 4.4): while any document is Pending,
+    # poll the backend by re-running the page so the status column updates
+    # live (Pending → Processed / Error) without a manual refresh.
+    pending = count_pending(documents)
+    if pending:
+        import time
+
+        st.info(
+            f"⏳ Processing {pending} document(s)… the list refreshes "
+            f"automatically every {PENDING_POLL_INTERVAL_S:.0f} seconds."
+        )
+        time.sleep(PENDING_POLL_INTERVAL_S)
+        st.rerun()
 
 
 if __name__ == "__main__":
