@@ -552,6 +552,15 @@ class TelegramAdapter:
                 logger.warning("getUpdates poll failed, will retry: %s", exc)
                 await asyncio.sleep(1)
                 continue
+            except httpx.TransportError as exc:
+                # A long-poll read timeout (or other transient transport error)
+                # is expected when no updates arrive within the poll window; it
+                # must not kill the loop. Log and retry on the next iteration.
+                logger.warning(
+                    "getUpdates transport error, will retry: %s", exc
+                )
+                await asyncio.sleep(1)
+                continue
             for update in updates:
                 update_id = update.get("update_id")
                 if isinstance(update_id, int):

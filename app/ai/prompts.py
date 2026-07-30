@@ -52,7 +52,8 @@ Message = dict[str, str]
 #: passages do not contain the answer, say so" wording has one home (Req 8.3).
 NO_MATCH_MESSAGE = (
     "I couldn't find any relevant information in the knowledge base to "
-    "answer your question."
+    "answer your question.\n"
+    "知识库中没有找到能回答您问题的相关信息。"
 )
 
 
@@ -344,7 +345,10 @@ _RAG_SYSTEM = (
     "guess.\n"
     "3. Be concise and direct. Prefer a short, well-organized answer over a "
     "long one.\n"
-    "4. Ground every claim in the passages. Do not fabricate facts, numbers, "
+    "4. ALWAYS reply in the same language as the user's question: answer in "
+    "Chinese for a Chinese question, in English for an English question, "
+    "even when the passages are written in a different language.\n"
+    "5. Ground every claim in the passages. Do not fabricate facts, numbers, "
     "names, or citations."
 )
 
