@@ -313,14 +313,15 @@ class Screen:
     icon: str
 
 
-#: The five screens of the admin app, in sidebar order (Req 9.1). ``Dashboard``
-#: is the ``Home.py`` entry point; the remaining four live under ``pages/``.
+#: The screens of the admin app, in sidebar order (Req 9.1). ``Dashboard``
+#: is the ``Home.py`` entry point; the remaining screens live under ``pages/``.
 SCREENS: tuple[Screen, ...] = (
     Screen("dashboard", "Dashboard", "dashboard", "🏠"),
     Screen("frontend_integration", "Frontend Integration", "frontend_integration", "🔌"),
     Screen("kb_management", "KB Management", "kb_management", "📚"),
     Screen("intent_configuration", "Intent Configuration", "intent_configuration", "🎯"),
     Screen("analytics", "Analytics", "analytics", "📊"),
+    Screen("test_chat", "Test Chat", "test_chat", "💬"),
 )
 
 
@@ -353,13 +354,18 @@ DEFAULT_API_BASE: str = "http://localhost:8000"
 #: Environment variable naming the backend base URL.
 API_BASE_ENV: str = "KMS_API_BASE"
 
+#: Fallback environment variable set by docker-compose for the admin-ui
+#: container (``API_BASE_URL=http://app:8000``).
+API_BASE_ENV_FALLBACK: str = "API_BASE_URL"
+
 
 def api_base_url(environ: dict[str, str] | None = None) -> str:
     """Resolve the backend admin API base URL (Req 9 consumer).
 
-    Reads the ``KMS_API_BASE`` environment variable, falling back to
-    ``http://localhost:8000``. Any trailing slash is stripped so callers can
-    always join paths with a single leading slash.
+    Reads the ``KMS_API_BASE`` environment variable, then the compose-provided
+    ``API_BASE_URL``, falling back to ``http://localhost:8000``. Any trailing
+    slash is stripped so callers can always join paths with a single leading
+    slash.
 
     Args:
         environ: Optional environment mapping (defaults to ``os.environ``),
@@ -369,7 +375,7 @@ def api_base_url(environ: dict[str, str] | None = None) -> str:
         The normalised base URL with no trailing slash.
     """
     env = os.environ if environ is None else environ
-    base = env.get(API_BASE_ENV) or DEFAULT_API_BASE
+    base = env.get(API_BASE_ENV) or env.get(API_BASE_ENV_FALLBACK) or DEFAULT_API_BASE
     return base.rstrip("/")
 
 
