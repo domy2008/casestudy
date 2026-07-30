@@ -27,3 +27,9 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Local dev master key (never commit)
+.local_master_key
+
+# Teams app package build artifact
+deploy/teams-app/*.zip

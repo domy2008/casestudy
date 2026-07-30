@@ -1,0 +1,45 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "9c65cc4e-be62-40d1-8101-65f6afe6ee38",
+  "packageName": "top.autobuy.intelliknowkms",
+  "developer": {
+    "name": "IntelliKnow",
+    "websiteUrl": "https://kms.autobuy.top",
+    "privacyUrl": "https://kms.autobuy.top",
+    "termsOfUseUrl": "https://kms.autobuy.top"
+  },
+  "name": {
+    "short": "IntelliKnow KMS",
+    "full": "IntelliKnow Knowledge Management System"
+  },
+  "description": {
+    "short": "Ask questions, get cited answers from the knowledge base.",
+    "full": "IntelliKnow KMS answers your questions using Retrieval-Augmented Generation over an admin-managed document knowledge base, with citations to source documents."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#4B53BC",
+  "bots": [
+    {
+      "botId": "9c65cc4e-be62-40d1-8101-65f6afe6ee38",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "kms.autobuy.top"
+  ]
+}

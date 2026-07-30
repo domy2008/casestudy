@@ -12,6 +12,16 @@ The environment variables consumed here are:
 ``TELEGRAM_PROXY_URL``
     HTTPS forward proxy used ONLY by the Telegram client, since Telegram is
     unreachable from AWS China (Req 12.2). Empty means "no proxy configured".
+``WHATSAPP_PROXY_URL``
+    HTTPS forward proxy used ONLY by the WhatsApp client. Like Telegram, the
+    WhatsApp Cloud API (``graph.facebook.com``) is unreachable from AWS China,
+    so all Graph API traffic is routed through this proxy (Req 12.2). Empty
+    means "no proxy configured".
+``TEAMS_TENANT_ID``
+    Microsoft Entra tenant (directory) ID for a Single Tenant bot app
+    registration. When set, Bot Framework tokens are acquired from the
+    tenant-specific OAuth2 endpoint; when empty, the multi-tenant
+    ``botframework.com`` endpoint is used.
 ``CREDENTIAL_MASTER_KEY``
     Fernet master key that encrypts ``credentials.enc`` (Req 1.3, 11.1). Comes
     from a host-only ``.env`` file that is never committed or baked into images.
@@ -45,6 +55,10 @@ class Settings:
         data_dir: Root directory of the persistent volume.
         dashscope_api_key: Fallback DashScope API key (may be empty).
         telegram_proxy_url: Proxy URL for Telegram traffic (may be empty).
+        whatsapp_proxy_url: Proxy URL for WhatsApp Cloud API traffic (may be
+            empty).
+        teams_tenant_id: Entra tenant ID for a Single Tenant Teams bot app
+            (empty means multi-tenant).
         credential_master_key: Fernet master key for the Credential_Store.
         aws_region: AWS region for CloudWatch integration.
     """
@@ -52,6 +66,8 @@ class Settings:
     data_dir: Path
     dashscope_api_key: str
     telegram_proxy_url: str
+    whatsapp_proxy_url: str
+    teams_tenant_id: str
     credential_master_key: str
     aws_region: str
 
@@ -122,6 +138,8 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         data_dir=data_dir,
         dashscope_api_key=env.get("DASHSCOPE_API_KEY", ""),
         telegram_proxy_url=env.get("TELEGRAM_PROXY_URL", ""),
+        whatsapp_proxy_url=env.get("WHATSAPP_PROXY_URL", ""),
+        teams_tenant_id=env.get("TEAMS_TENANT_ID", ""),
         credential_master_key=env.get("CREDENTIAL_MASTER_KEY", ""),
         aws_region=aws_region,
     )

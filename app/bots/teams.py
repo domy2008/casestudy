@@ -59,6 +59,7 @@ __all__ = [
     "TEAMS_TRUNCATION_INDICATOR",
     "TEAMS_SOURCES_HEADER",
     "BOT_FRAMEWORK_LOGIN_URL",
+    "BOT_FRAMEWORK_TENANT_LOGIN_URL_TEMPLATE",
     "BOT_FRAMEWORK_SCOPE",
     "render_teams_sources_footer",
     "format_teams_message",
@@ -88,9 +89,16 @@ TEAMS_TRUNCATION_INDICATOR = "\n\n_Response truncated_"
 TEAMS_SOURCES_HEADER = "\n\n**Sources:**\n"
 
 #: OAuth2 token endpoint for acquiring a Bot Framework bearer token via the
-#: client-credentials grant (app_id/app_password).
+#: client-credentials grant (app_id/app_password). Used for Multi Tenant app
+#: registrations (the default when ``TEAMS_TENANT_ID`` is unset).
 BOT_FRAMEWORK_LOGIN_URL = (
     "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+)
+
+#: Tenant-specific OAuth2 token endpoint template for Single Tenant app
+#: registrations. Selected when the ``TEAMS_TENANT_ID`` env var is set.
+BOT_FRAMEWORK_TENANT_LOGIN_URL_TEMPLATE = (
+    "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 )
 
 #: OAuth2 scope requested for Bot Connector calls.
@@ -450,6 +458,11 @@ class TeamsAdapter(FrontendAdapter):
         """
         await self._jwt_validator.validate(auth_header, activity)
 
+        if activity.get("type") != "message":
+            # System events (conversationUpdate, typing, ...) carry no user
+            # query; ignore them silently instead of replying with a rejection.
+            return None
+
         conversation_ref = extract_conversation_reference(activity)
         if not conversation_ref.get("conversation_id"):
             # No conversation to reply to (e.g. a bare system event).
@@ -582,6 +595,21 @@ class TeamsAdapter(FrontendAdapter):
             return await self._token_provider()
         return await self._acquire_token()
 
+    def _login_url(self) -> str:
+        """Return the OAuth2 token endpoint for the configured app type.
+
+        Returns:
+            The tenant-specific endpoint when ``teams_tenant_id`` is set in
+            settings (Single Tenant app registration); otherwise the
+            multi-tenant ``botframework.com`` endpoint.
+        """
+        tenant_id = self._settings.teams_tenant_id
+        if tenant_id:
+            return BOT_FRAMEWORK_TENANT_LOGIN_URL_TEMPLATE.format(
+                tenant_id=tenant_id
+            )
+        return BOT_FRAMEWORK_LOGIN_URL
+
     async def _acquire_token(self) -> str:
         """Acquire a Bot Framework token via the client-credentials grant.
 
@@ -602,7 +630,7 @@ class TeamsAdapter(FrontendAdapter):
         }
         try:
             response = await self._client.post(
-                BOT_FRAMEWORK_LOGIN_URL, data=data, timeout=TOKEN_TIMEOUT_S
+                self._login_url(), data=data, timeout=TOKEN_TIMEOUT_S
             )
         except httpx.TransportError as exc:
             self._log_failure("acquire_token", exc)
