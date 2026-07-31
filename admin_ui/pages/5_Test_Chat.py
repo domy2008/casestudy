@@ -99,11 +99,23 @@ def _inject_history_css() -> None:
             text-transform: uppercase; color: #64748b; margin: 4px 0 8px 4px;
           }
           /* Pin the history block to the viewport while the (taller) chat
-             column scrolls, so the topic list never scrolls out of view. */
+             column scrolls. Two ingredients, both required:
+             1. Stretch every ancestor between the column and the block to
+                the full column height, giving the sticky element room to
+                travel (otherwise its containing block is its own height and
+                sticky never engages).
+             2. Keep the block itself content-sized: Streamlit's own emotion
+                CSS sets flex: 1 1 0% on it, which would stretch it to fill
+                that tall parent and leave no travel room — hence !important. */
+          div[data-testid="stColumn"]:has(div.st-key-ik_history_sticky)
+            div:has(div.st-key-ik_history_sticky) {
+            height: 100%;
+          }
           div.st-key-ik_history_sticky {
-            position: sticky;
-            top: 4.5rem;   /* clears Streamlit's fixed header */
-            align-self: flex-start;
+            position: sticky !important;
+            top: 4.5rem !important;   /* clears Streamlit's fixed header */
+            height: fit-content !important;
+            flex: 0 0 auto !important;
           }
           div[class*="st-key-reask_"] { width: 100%; }
           div[class*="st-key-reask_"] button {
