@@ -110,6 +110,7 @@ If a test fails, the card shows the reason and the screen lists the recent error
 1. **Analytics** shows the query history (text, detected intent, confidence, status), the most-accessed documents, the most common spaces, and per-space accuracy.
 2. Mark the correct space for misclassified queries in the **verification** control — accuracy rates update from your verdicts, and adding keywords to spaces improves future routing.
 3. Export everything as CSV for offline reporting.
+4. Infrastructure metrics and alarms live in the **[CloudWatch dashboard](https://cn-north-1.console.amazonaws.cn/cloudwatch/home?region=cn-north-1#dashboards:name=IntelliKnow-KMS)** (AWS console sign-in required): query latency p50/p95, error rate, backend health, and the three alarm states (latency p95 > 3 s, error rate > 5%, backend unhealthy), all notifying the `intelliknow-alarms` SNS topic. The same link is on the portal's Dashboard screen under **Monitoring**.
 
 ---
 
@@ -205,7 +206,7 @@ Restrict port `8501` to admin IPs via the security group, and terminate TLS in f
 
 Follow the **User Guide** above: enter DashScope + IM credentials in Frontend Integration, upload a document, and confirm a cited answer in Test Chat and in each connected IM tool.
 
-### 6. Provision CloudWatch alarms (once per environment)
+### 6. Provision CloudWatch alarms + dashboard (once per environment)
 
 ```bash
 python3 -m pip install --user boto3
@@ -215,6 +216,8 @@ python3 deploy/setup_cloudwatch_alarms.py \
     --latency-threshold-ms 3000 \
     --error-rate-threshold-pct 5
 ```
+
+This idempotently creates the `intelliknow-alarms` SNS topic, three alarms (query latency p95, error rate, backend health), and the **IntelliKnow-KMS** CloudWatch dashboard; the script prints the dashboard URL. Set `CLOUDWATCH_DASHBOARD_URL` in the admin UI's environment to surface the link on the portal's Dashboard screen (defaults to the cn-north-1 URL).
 
 ## Testing
 

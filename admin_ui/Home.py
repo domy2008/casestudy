@@ -388,6 +388,14 @@ def _main() -> None:
     finally:
         client.close()
 
+    section_header("Monitoring", module="dashboard")
+    st.markdown(
+        "📈 Infrastructure metrics and alarms (query latency p95, error "
+        "rate, backend health) live in the "
+        f"[CloudWatch dashboard]({CLOUDWATCH_DASHBOARD_URL}) "
+        "(AWS console sign-in required)."
+    )
+
 
 if __name__ == "__main__":
     _main()
