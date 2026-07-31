@@ -3,7 +3,7 @@
 Creates (idempotently) in the target AWS China region (Req 13.3-13.5, 13.7):
 
 1. An SNS topic (``intelliknow-alarms``) with an optional email subscription.
-2. Alarm: query latency p95 > threshold (default 3000 ms) over a 5-minute window.
+2. Alarm: query latency p95 > threshold over a 5-minute window.
 3. Alarm: error rate > threshold (default 5%) over a 5-minute window.
 4. One alarm per integration tool: IntegrationHealthy{tool} unhealthy (< 1)
    over a 5-minute window.
@@ -17,9 +17,7 @@ CloudWatch alarms and SNS in the AWS China partition):
 
     python deploy/setup_cloudwatch_alarms.py \
         --region cn-north-1 \
-        --alarm-email ops@example.com \
-        --latency-threshold-ms 3000 \
-        --error-rate-threshold-pct 5
+        --alarm-email ops@example.com
 
 This script only creates/updates alarms and a topic; it never deletes
 resources.
@@ -58,8 +56,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--latency-threshold-ms",
         type=float,
-        default=3000.0,
-        help="p95 latency alarm threshold in milliseconds. Default: 3000 (Req 13.3)",
+        default=8000.0,
+        help="p95 latency alarm threshold in milliseconds (Req 13.3). The "
+        "default sits well above normal LLM generation time (~3-5s end to "
+        "end), so the alarm flags genuine degradation, not routine queries.",
     )
     parser.add_argument(
         "--error-rate-threshold-pct",
