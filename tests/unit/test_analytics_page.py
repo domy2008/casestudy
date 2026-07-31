@@ -163,7 +163,29 @@ def test_history_row_to_display_maps_all_columns(page: ModuleType) -> None:
         "Detected Intent": "HR",
         "Confidence": "91%",
         "Status": "Success",
+        "Verified": "—",
     }
+    # A verified entry resolves its verified space name.
+    entry["verified_space_id"] = 2
+    assert page.history_row_to_display(entry, space_names)["Verified"] == "Finance"
+
+
+def test_selected_row_index_shapes(page: ModuleType) -> None:
+    # Mapping-style selection event (and the shapes that mean "no selection").
+    assert page.selected_row_index({"selection": {"rows": [3, 5]}}) == 3
+    assert page.selected_row_index({"selection": {"rows": []}}) is None
+    assert page.selected_row_index({"selection": {}}) is None
+    assert page.selected_row_index({}) is None
+    assert page.selected_row_index(None) is None
+
+    # Attribute-style selection event (what st.dataframe actually returns).
+    class _Sel:
+        rows = [0]
+
+    class _Event:
+        selection = _Sel()
+
+    assert page.selected_row_index(_Event()) == 0
 
 
 def test_resolve_space_label_unknown_and_missing(page: ModuleType) -> None:

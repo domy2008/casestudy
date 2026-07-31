@@ -13,8 +13,9 @@ coverage. It renders (all against the shared backend admin REST API via
   Intent_Spaces for the selected range (Req 10.2).
 * **Per-space accuracy** — the classification accuracy rate per Intent_Space,
   ``N/A`` where a space has no Admin-verified queries (Req 10.3).
-* **Query verification** — a control letting the Admin mark the correct
-  Intent_Space for a query, feeding the accuracy computation (Req 10.3).
+* **Query verification** — the history table is row-selectable; selecting a
+  row reveals inline controls to confirm the detected Intent_Space with one
+  click or mark the correct one, feeding the accuracy computation (Req 10.3).
 * **CSV export** — a download button producing the filtered Query_Log plus
   metrics; an export failure surfaces an error message and changes nothing
   (Req 10.5, 10.8).
@@ -254,7 +255,40 @@ def history_row_to_display(
         "Detected Intent": intent,
         "Confidence": format_confidence(entry.get("confidence")),
         "Status": str(entry.get("response_status", "") or ""),
+        "Verified": resolve_space_label(entry.get("verified_space_id"), space_names),
     }
+
+
+def selected_row_index(event: Any) -> int | None:
+    """Extract the first selected row index from a dataframe selection event.
+
+    ``st.dataframe(on_select="rerun")`` returns a selection-state object whose
+    ``selection.rows`` holds the selected row indices. This tolerates both
+    attribute-style and mapping-style access (and any malformed shape) so the
+    caller can treat "no usable selection" uniformly as ``None``.
+
+    Args:
+        event: The value returned by a selectable ``st.dataframe`` call.
+
+    Returns:
+        The first selected row index, or ``None`` when nothing is selected.
+    """
+    if event is None:
+        return None
+    selection = getattr(event, "selection", None)
+    if selection is None and isinstance(event, dict):
+        selection = event.get("selection")
+    if selection is None:
+        return None
+    rows = getattr(selection, "rows", None)
+    if rows is None and isinstance(selection, dict):
+        rows = selection.get("rows")
+    if not rows:
+        return None
+    try:
+        return int(rows[0])
+    except (TypeError, ValueError):
+        return None
 
 
 def resolve_space_label(space_id: Any, space_names: dict[int, str]) -> str:
@@ -529,8 +563,105 @@ def _render_history(
         return
 
     rows = [history_row_to_display(entry, space_names) for entry in entries]
-    st.caption(f"Showing {len(rows)} most recent entries (newest first).")
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.caption(
+        f"Showing {len(rows)} most recent entries (newest first). "
+        "Select a row to verify its classification."
+    )
+    event = st.dataframe(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="analytics_history_table",
+    )
+    index = selected_row_index(event)
+    if index is not None and 0 <= index < len(entries):
+        _render_row_verification(st, client, entries[index], space_names)
+
+
+def _render_row_verification(
+    st: Any,
+    client: ApiClient,
+    entry: dict[str, Any],
+    space_names: dict[int, str],
+) -> None:
+    """Render inline verification controls for the selected history row.
+
+    One click on "Detected is correct" verifies the query as its detected
+    Intent_Space (the common case); otherwise the Admin picks the correct
+    space and marks it. Both paths call ``POST /queries/{id}/verify`` and
+    rerun so the table's Verified column and the accuracy metrics refresh
+    immediately (Req 10.3).
+    """
+    query_id = entry.get("id")
+    if query_id is None:
+        st.warning("This entry has no id, so it cannot be verified.")
+        return
+    if not space_names:
+        st.info("Configure Intent_Spaces first to verify classifications.")
+        return
+
+    detected_id = entry.get("detected_space_id")
+    detected_label = resolve_space_label(detected_id, space_names)
+    verified_label = resolve_space_label(entry.get("verified_space_id"), space_names)
+
+    with st.container(border=True):
+        st.markdown(
+            f"**Verify query #{int(query_id)}** — “{entry.get('query_text', '')}”"
+        )
+        st.caption(
+            f"Detected: {detected_label} · "
+            f"Confidence: {format_confidence(entry.get('confidence'))} · "
+            f"Currently verified as: {verified_label}"
+        )
+
+        col_confirm, col_space, col_mark = st.columns([1, 1, 1])
+        with col_confirm:
+            confirm = st.button(
+                f"✓ Detected is correct ({detected_label})",
+                key=f"analytics_confirm_{query_id}",
+                disabled=detected_id is None,
+                help="One click: verify this query as its detected space."
+                if detected_id is not None
+                else "No space was detected for this query — pick one instead.",
+            )
+        space_options = sorted(space_names, key=lambda sid: space_names[sid].lower())
+        with col_space:
+            chosen = st.selectbox(
+                "Correct space",
+                options=space_options,
+                format_func=lambda sid: space_names.get(sid, f"#{sid}"),
+                key=f"analytics_correct_space_{query_id}",
+                label_visibility="collapsed",
+            )
+        with col_mark:
+            mark = st.button(
+                "Mark as this space", key=f"analytics_mark_{query_id}"
+            )
+
+    target: int | None = None
+    if confirm and detected_id is not None:
+        target = int(detected_id)
+    elif mark:
+        target = int(chosen)
+    if target is None:
+        return
+
+    try:
+        client.post(verify_path(int(query_id)), json={"verified_space_id": target})
+    except ApiError as exc:
+        if exc.status_code == 404:
+            st.error("Verification failed: query not found or endpoint absent.")
+        else:
+            st.error(f"Could not record verification: {exc.message}")
+        return
+    st.toast(
+        f"Query {int(query_id)} verified as "
+        f"{space_names.get(target, target)}.",
+        icon="✅",
+    )
+    st.rerun()
 
 
 def _render_usage_metrics(
@@ -599,53 +730,6 @@ def _render_accuracy(client: ApiClient, space_names: dict[int, str]) -> None:
         for sid, pct in sorted(accuracy.items())
     ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
-
-
-def _render_verification(client: ApiClient, space_names: dict[int, str]) -> None:
-    """Render the query-verification control (Admin marks correct space)."""
-    import streamlit as st
-
-    section_header("Verify a Classification", module="analytics")
-    st.caption(
-        "Mark the Intent_Space a query *should* have been routed to; "
-        "this feeds the accuracy metrics."
-    )
-    if not space_names:
-        st.info("Configure Intent_Spaces first to verify classifications.")
-        return
-
-    col_id, col_space = st.columns(2)
-    with col_id:
-        query_id = st.number_input(
-            "Query ID", min_value=1, step=1, key="analytics_verify_id"
-        )
-    space_options = sorted(space_names, key=lambda sid: space_names[sid].lower())
-    with col_space:
-        verified_space = st.selectbox(
-            "Correct Intent Space",
-            options=space_options,
-            format_func=lambda sid: space_names.get(sid, f"#{sid}"),
-            key="analytics_verify_space",
-        )
-
-    if st.button("Mark correct space", key="analytics_verify_btn"):
-        try:
-            client.post(
-                verify_path(int(query_id)),
-                json={"verified_space_id": int(verified_space)},
-            )
-            st.success(
-                f"Query {int(query_id)} verified as "
-                f"{space_names.get(int(verified_space), verified_space)}."
-            )
-        except ApiError as exc:
-            if exc.status_code == 404:
-                st.error(
-                    "Verification is not available "
-                    "(query not found or endpoint absent)."
-                )
-            else:
-                st.error(f"Could not record verification: {exc.message}")
 
 
 def _render_export(
@@ -737,7 +821,6 @@ def _main() -> None:
             help_text="Configured Intent_Spaces available for filtering.",
         )
 
-    _render_verification(client, space_names)
     _render_export(client, start_iso, end_iso, space_ids)
 
 
