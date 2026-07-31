@@ -71,8 +71,11 @@ QUERIES_PATH = "/queries"
 #: Query_Log ``tool`` value that marks web Test Chat queries.
 WEBCHAT_TOOL = "webchat"
 
-#: Maximum number of past questions listed in the "Recent questions" panel.
+#: Maximum number of past questions listed in the sidebar history.
 RECENT_QUESTIONS_LIMIT = 20
+
+#: Sidebar labels are truncated to this many characters (ChatGPT-style list).
+SIDEBAR_LABEL_MAX = 28
 
 
 def recent_webchat_questions(entries: Any) -> list[tuple[str, str]]:
@@ -198,22 +201,37 @@ def _main() -> None:
     history.append({"role": "assistant", "text": text})
 
 
+def sidebar_label(text: str, limit: int = SIDEBAR_LABEL_MAX) -> str:
+    """Truncate a question for its sidebar entry (ChatGPT-style list).
+
+    Args:
+        text: The full question text.
+        limit: Maximum characters before an ellipsis is appended.
+
+    Returns:
+        The label, truncated with ``…`` when longer than ``limit``.
+    """
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _render_recent_questions() -> None:
-    """Render past web-chat questions restored from the backend query log.
+    """Render past questions as a ChatGPT-style history list in the sidebar.
 
     The chat transcript itself is session-scoped (answers are not persisted),
-    but questions survive in the Query_Log, so an expander lists the most
-    recent ones across sessions — each with an "ask again" button that
-    re-runs it through the pipeline. Degrades silently to nothing when the
-    log is empty and to an inline note when the backend is unreachable.
+    but questions survive in the Query_Log, so the sidebar lists the most
+    recent web-chat questions across sessions. Clicking one re-runs it
+    through the pipeline (the answer is regenerated, not replayed). Degrades
+    silently when the log is empty and to a small note when the backend is
+    unreachable.
     """
     import streamlit as st
 
     client = ApiClient()
     try:
         entries = client.get(QUERIES_PATH, params={"limit": 50})
-    except ApiError as exc:
-        st.caption(f"Recent questions unavailable: {exc.message}")
+    except ApiError:
+        st.sidebar.caption("History unavailable.")
         return
     finally:
         client.close()
@@ -222,13 +240,17 @@ def _render_recent_questions() -> None:
     if not questions:
         return
 
-    with st.expander(f"🕘 Recent questions ({len(questions)})"):
-        for i, (ts, text) in enumerate(questions):
-            col_q, col_btn = st.columns([5, 1])
-            col_q.markdown(f"`{ts}` — {text}")
-            if col_btn.button("↻ ask", key=f"reask_{i}"):
-                st.session_state["test_chat_reask"] = text
-                st.rerun()
+    st.sidebar.markdown("**🕘 Recent**")
+    for i, (ts, text) in enumerate(questions):
+        if st.sidebar.button(
+            sidebar_label(text),
+            key=f"reask_{i}",
+            help=f"{ts} — click to ask again",
+            type="tertiary",
+            use_container_width=True,
+        ):
+            st.session_state["test_chat_reask"] = text
+            st.rerun()
 
 
 def _stream_answer(prompt: str, final: dict[str, Any]) -> Iterator[str]:
