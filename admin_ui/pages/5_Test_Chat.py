@@ -164,41 +164,49 @@ def _main() -> None:
 
     history: list[dict[str, Any]] = st.session_state.setdefault(HISTORY_KEY, [])
 
-    _render_recent_questions()
+    # ChatGPT-style layout: history topics in a narrow left column, the
+    # conversation in the wide right column.
+    col_hist, col_chat = st.columns([1, 3], gap="medium")
 
-    if history and st.button("🗑️ Clear conversation"):
-        st.session_state[HISTORY_KEY] = []
-        st.rerun()
+    with col_hist:
+        st.markdown("**🕘 Recent**")
+        _render_recent_questions(col_hist)
 
-    # Replay the conversation so far.
-    for message in history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["text"])
+    with col_chat:
+        if history and st.button("🗑️ Clear conversation"):
+            st.session_state[HISTORY_KEY] = []
+            st.rerun()
 
-    # A click on "ask again" in the recent-questions panel feeds the pipeline
-    # exactly like a typed message.
+        # Replay the conversation so far.
+        for message in history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["text"])
+
+    # A click on a history topic feeds the pipeline exactly like a typed
+    # message. The input itself stays pinned to the bottom of the page.
     prompt = st.chat_input("Ask the knowledge base…") or st.session_state.pop(
         "test_chat_reask", None
     )
     if not prompt:
         return
 
-    history.append({"role": "user", "text": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    with col_chat:
+        history.append({"role": "user", "text": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    # Stream the answer token by token (SSE); the terminal event lands in
-    # ``final`` so the sources footer renders at the end.
-    final: dict[str, Any] = {}
-    with st.chat_message("assistant"):
-        streamed = st.write_stream(_stream_answer(prompt, final))
-        text = streamed if isinstance(streamed, str) else "".join(streamed)
-        sources = format_stream_tail(final)
-        if sources:
-            st.markdown(sources)
-            text += "\n\n" + sources
+        # Stream the answer token by token (SSE); the terminal event lands in
+        # ``final`` so the sources footer renders at the end.
+        final: dict[str, Any] = {}
+        with st.chat_message("assistant"):
+            streamed = st.write_stream(_stream_answer(prompt, final))
+            text = streamed if isinstance(streamed, str) else "".join(streamed)
+            sources = format_stream_tail(final)
+            if sources:
+                st.markdown(sources)
+                text += "\n\n" + sources
 
-    history.append({"role": "assistant", "text": text})
+        history.append({"role": "assistant", "text": text})
 
 
 def sidebar_label(text: str, limit: int = SIDEBAR_LABEL_MAX) -> str:
@@ -215,15 +223,18 @@ def sidebar_label(text: str, limit: int = SIDEBAR_LABEL_MAX) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _render_recent_questions() -> None:
-    """Render past questions as a ChatGPT-style history list in the sidebar.
+def _render_recent_questions(container) -> None:
+    """Render past questions as a ChatGPT-style history list.
 
     The chat transcript itself is session-scoped (answers are not persisted),
-    but questions survive in the Query_Log, so the sidebar lists the most
-    recent web-chat questions across sessions. Clicking one re-runs it
+    but questions survive in the Query_Log, so the history column lists the
+    most recent web-chat questions across sessions. Clicking one re-runs it
     through the pipeline (the answer is regenerated, not replayed). Degrades
     silently when the log is empty and to a small note when the backend is
     unreachable.
+
+    Args:
+        container: The Streamlit container (e.g. a column) to render into.
     """
     import streamlit as st
 
@@ -231,18 +242,18 @@ def _render_recent_questions() -> None:
     try:
         entries = client.get(QUERIES_PATH, params={"limit": 50})
     except ApiError:
-        st.sidebar.caption("History unavailable.")
+        container.caption("History unavailable.")
         return
     finally:
         client.close()
 
     questions = recent_webchat_questions(entries)
     if not questions:
+        container.caption("No questions yet.")
         return
 
-    st.sidebar.markdown("**🕘 Recent**")
     for i, (ts, text) in enumerate(questions):
-        if st.sidebar.button(
+        if container.button(
             sidebar_label(text),
             key=f"reask_{i}",
             help=f"{ts} — click to ask again",
