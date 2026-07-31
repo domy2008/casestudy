@@ -98,6 +98,13 @@ def _inject_history_css() -> None:
             font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em;
             text-transform: uppercase; color: #64748b; margin: 4px 0 8px 4px;
           }
+          /* Pin the history block to the viewport while the (taller) chat
+             column scrolls, so the topic list never scrolls out of view. */
+          div.st-key-ik_history_sticky {
+            position: sticky;
+            top: 4.5rem;   /* clears Streamlit's fixed header */
+            align-self: flex-start;
+          }
           div[class*="st-key-reask_"] { width: 100%; }
           div[class*="st-key-reask_"] button {
             display: block; width: 100%;
@@ -211,11 +218,16 @@ def _main() -> None:
     col_hist, col_chat = st.columns([1, 3], gap="medium")
 
     with col_hist:
-        st.markdown(
-            '<div class="ik-history-title">Recent</div>', unsafe_allow_html=True
-        )
-        panel = st.container(height=HISTORY_PANEL_HEIGHT_PX, border=False)
-        _render_recent_questions(panel)
+        # Keyed wrapper so CSS can pin the whole history block (title +
+        # scrollable list) to the viewport while the conversation scrolls.
+        sticky = st.container(key="ik_history_sticky")
+        with sticky:
+            st.markdown(
+                '<div class="ik-history-title">Recent</div>',
+                unsafe_allow_html=True,
+            )
+            panel = st.container(height=HISTORY_PANEL_HEIGHT_PX, border=False)
+            _render_recent_questions(panel)
 
     with col_chat:
         if history and st.button("🗑️ Clear conversation"):
