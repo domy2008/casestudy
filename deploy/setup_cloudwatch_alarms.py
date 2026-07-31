@@ -34,7 +34,11 @@ import boto3
 
 NAMESPACE = "IntelliKnow"
 TOPIC_NAME = "intelliknow-alarms"
-INTEGRATION_TOOLS = ("telegram", "teams")
+# Health-metric suffixes the app actually publishes. The backend reports its
+# own liveness as IntegrationHealthyapp (see RequestMetricsSource in
+# app/main.py); per-tool health rides on the same metric family if published.
+INTEGRATION_TOOLS = ("app",)
+DASHBOARD_NAME = "IntelliKnow-KMS"
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,8 +141,85 @@ def put_alarms(cloudwatch, topic_arn: str, latency_ms: float, error_pct: float) 
         print(f"Alarm IntelliKnow-IntegrationHealth-{tool}: {metric} < 1 / 5 min")
 
 
+def put_dashboard(cloudwatch, region: str) -> str:
+    """Create or update the IntelliKnow CloudWatch dashboard.
+
+    One shareable console page showing query latency (p50/p95), error rate,
+    backend health, and the alarm states. Returns the dashboard console URL
+    (AWS China console domain).
+    """
+    import json
+
+    def metric_widget(title: str, metrics: list, *, stat: str = "Average") -> dict:
+        return {
+            "type": "metric",
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": title,
+                "region": region,
+                "metrics": metrics,
+                "stat": stat,
+                "period": 300,
+                "view": "timeSeries",
+            },
+        }
+
+    body = {
+        "widgets": [
+            metric_widget(
+                "Query latency (ms)",
+                [
+                    [NAMESPACE, "QueryLatencyMs", {"stat": "p95", "label": "p95"}],
+                    [NAMESPACE, "QueryLatencyMs", {"stat": "p50", "label": "p50"}],
+                ],
+            ),
+            metric_widget(
+                "Error rate (%)",
+                [[NAMESPACE, "ErrorRatePercent", {"label": "error rate"}]],
+            ),
+            metric_widget(
+                "Backend health (1 = healthy)",
+                [
+                    [NAMESPACE, f"IntegrationHealthy{tool}", {"label": tool}]
+                    for tool in INTEGRATION_TOOLS
+                ],
+                stat="Minimum",
+            ),
+        ]
+    }
+
+    # Alarm-status widget: needs full ARNs, resolved from the alarms above.
+    alarm_names = [
+        "IntelliKnow-QueryLatencyP95",
+        "IntelliKnow-ErrorRate",
+        *(f"IntelliKnow-IntegrationHealth-{tool}" for tool in INTEGRATION_TOOLS),
+    ]
+    described = cloudwatch.describe_alarms(AlarmNames=alarm_names)
+    alarm_arns = [a["AlarmArn"] for a in described.get("MetricAlarms", [])]
+    if alarm_arns:
+        body["widgets"].append(
+            {
+                "type": "alarm",
+                "width": 24,
+                "height": 2,
+                "properties": {"title": "Alarms", "alarms": alarm_arns},
+            }
+        )
+
+    cloudwatch.put_dashboard(
+        DashboardName=DASHBOARD_NAME, DashboardBody=json.dumps(body)
+    )
+    url = (
+        f"https://{region}.console.amazonaws.cn/cloudwatch/home"
+        f"?region={region}#dashboards:name={DASHBOARD_NAME}"
+    )
+    print(f"Dashboard {DASHBOARD_NAME}: {url}")
+    return url
+
+
 def main() -> int:
-    """Entry point: provision the SNS topic and all alarms in the given region."""
+    """Entry point: provision the SNS topic, all alarms, and the dashboard."""
     args = parse_args()
     if not args.region.startswith("cn-"):
         print(
@@ -153,6 +234,7 @@ def main() -> int:
 
     topic_arn = ensure_topic(sns, args.alarm_email)
     put_alarms(cloudwatch, topic_arn, args.latency_threshold_ms, args.error_rate_threshold_pct)
+    put_dashboard(cloudwatch, args.region)
     print("Done. All alarms notify:", topic_arn)
     return 0
 

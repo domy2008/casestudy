@@ -69,6 +69,16 @@ DASHBOARD_SUMMARY_PATH = "/dashboard/summary"
 #: with zero documents still shows up as ``0`` rather than vanishing (Req 9.5).
 DOCUMENT_STATUSES: tuple[str, ...] = ("Pending", "Processed", "Error")
 
+#: CloudWatch monitoring dashboard for this deployment (latency p95, error
+#: rate, backend health, alarm states). Provisioned by
+#: ``deploy/setup_cloudwatch_alarms.py``; override per environment via the
+#: ``CLOUDWATCH_DASHBOARD_URL`` environment variable.
+CLOUDWATCH_DASHBOARD_URL: str = _os.environ.get(
+    "CLOUDWATCH_DASHBOARD_URL",
+    "https://cn-north-1.console.amazonaws.cn/cloudwatch/home"
+    "?region=cn-north-1#dashboards:name=IntelliKnow-KMS",
+)
+
 
 class DashboardDataError(ValueError):
     """Raised when a ``/dashboard/summary`` section is missing or malformed.

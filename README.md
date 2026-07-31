@@ -274,4 +274,5 @@ intelliknow-kms/
 - [High-Level Design (HLD)](docs/HLD.md)
 - [Low-Level Design (LLD)](docs/LLD.md)
 - [AI Usage Reflection](docs/AI_USAGE_REFLECTION.md)
+- [Test Report](docs/TEST_REPORT.md)
 - [Deployment Guide](deploy/DEPLOYMENT.md)
