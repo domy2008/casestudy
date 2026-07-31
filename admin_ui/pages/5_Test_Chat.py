@@ -41,6 +41,8 @@ from typing import Any, Iterator
 import httpx
 
 from admin_ui.ui.components import (
+    ApiClient,
+    ApiError,
     api_base_url,
     build_url,
     inject_base_css,
@@ -62,6 +64,45 @@ STREAM_READ_TIMEOUT_S = 30.0
 
 #: Session-state key holding the conversation history.
 HISTORY_KEY = "test_chat_history"
+
+#: Query-log endpoint used to restore past questions across sessions.
+QUERIES_PATH = "/queries"
+
+#: Query_Log ``tool`` value that marks web Test Chat queries.
+WEBCHAT_TOOL = "webchat"
+
+#: Maximum number of past questions listed in the "Recent questions" panel.
+RECENT_QUESTIONS_LIMIT = 20
+
+
+def recent_webchat_questions(entries: Any) -> list[tuple[str, str]]:
+    """Extract past web-chat questions from a ``/queries`` payload.
+
+    Pure helper: keeps only entries whose tool is :data:`WEBCHAT_TOOL`,
+    de-duplicates by question text (keeping the most recent occurrence,
+    given newest-first input), and trims timestamps to whole seconds.
+
+    Args:
+        entries: The decoded ``/queries`` response (newest first).
+
+    Returns:
+        Up to :data:`RECENT_QUESTIONS_LIMIT` ``(timestamp, question)`` pairs,
+        newest first.
+    """
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict) or entry.get("tool") != WEBCHAT_TOOL:
+            continue
+        text = str(entry.get("query_text", "") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ts = str(entry.get("ts", "") or "").replace("T", " ").split(".")[0]
+        out.append((ts, text))
+        if len(out) >= RECENT_QUESTIONS_LIMIT:
+            break
+    return out
 
 
 def parse_sse_event(line: str) -> dict[str, Any] | None:
@@ -120,6 +161,8 @@ def _main() -> None:
 
     history: list[dict[str, Any]] = st.session_state.setdefault(HISTORY_KEY, [])
 
+    _render_recent_questions()
+
     if history and st.button("🗑️ Clear conversation"):
         st.session_state[HISTORY_KEY] = []
         st.rerun()
@@ -129,7 +172,11 @@ def _main() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["text"])
 
-    prompt = st.chat_input("Ask the knowledge base…")
+    # A click on "ask again" in the recent-questions panel feeds the pipeline
+    # exactly like a typed message.
+    prompt = st.chat_input("Ask the knowledge base…") or st.session_state.pop(
+        "test_chat_reask", None
+    )
     if not prompt:
         return
 
@@ -149,6 +196,39 @@ def _main() -> None:
             text += "\n\n" + sources
 
     history.append({"role": "assistant", "text": text})
+
+
+def _render_recent_questions() -> None:
+    """Render past web-chat questions restored from the backend query log.
+
+    The chat transcript itself is session-scoped (answers are not persisted),
+    but questions survive in the Query_Log, so an expander lists the most
+    recent ones across sessions — each with an "ask again" button that
+    re-runs it through the pipeline. Degrades silently to nothing when the
+    log is empty and to an inline note when the backend is unreachable.
+    """
+    import streamlit as st
+
+    client = ApiClient()
+    try:
+        entries = client.get(QUERIES_PATH, params={"limit": 50})
+    except ApiError as exc:
+        st.caption(f"Recent questions unavailable: {exc.message}")
+        return
+    finally:
+        client.close()
+
+    questions = recent_webchat_questions(entries)
+    if not questions:
+        return
+
+    with st.expander(f"🕘 Recent questions ({len(questions)})"):
+        for i, (ts, text) in enumerate(questions):
+            col_q, col_btn = st.columns([5, 1])
+            col_q.markdown(f"`{ts}` — {text}")
+            if col_btn.button("↻ ask", key=f"reask_{i}"):
+                st.session_state["test_chat_reask"] = text
+                st.rerun()
 
 
 def _stream_answer(prompt: str, final: dict[str, Any]) -> Iterator[str]:
