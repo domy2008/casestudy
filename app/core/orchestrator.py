@@ -401,6 +401,84 @@ class Orchestrator:
         """
         started = time.monotonic()
 
+        classification, detected_space_id, passages = await self._prepare(ctx)
+
+        # 5: generate the grounded answer (no-match / success / failed).
+        response = await self._generator.generate(ctx.text, passages)
+
+        # 6: write EXACTLY ONE Query_Log entry and record document access.
+        latency_ms = int((time.monotonic() - started) * 1000)
+        self._log_query(
+            ctx,
+            detected_space_id,
+            classification.confidence,
+            response,
+            passages,
+            latency_ms,
+        )
+
+        return response
+
+    async def handle_query_stream(self, ctx: QueryContext):
+        """Run the full query pipeline, streaming the answer as it generates.
+
+        Identical to :meth:`handle_query` in every pipeline step and guarantee
+        (same classification/routing/retrieval, exactly one Query_Log entry,
+        same document-access recording) — only the generation is delivered
+        incrementally via the generator's streaming path. Consumed by the web
+        Test Chat SSE endpoint; the IM adapters keep :meth:`handle_query`.
+
+        Args:
+            ctx: The validated inbound query context.
+
+        Yields:
+            ``("delta", str)`` events as answer text is generated, then one
+            terminal ``("done", GeneratedResponse)`` event after the Query_Log
+            entry has been written.
+        """
+        started = time.monotonic()
+        classification, detected_space_id, passages = await self._prepare(ctx)
+
+        response: GeneratedResponse | None = None
+        async for kind, payload in self._generator.generate_stream(
+            ctx.text, passages
+        ):
+            if kind == "done":
+                response = payload
+                break
+            yield (kind, payload)
+
+        if response is None:  # defensive: the generator always emits "done"
+            response = GeneratedResponse(
+                text="", citations=[], status="failed"
+            )
+
+        latency_ms = int((time.monotonic() - started) * 1000)
+        self._log_query(
+            ctx,
+            detected_space_id,
+            classification.confidence,
+            response,
+            passages,
+            latency_ms,
+        )
+        yield ("done", response)
+
+    async def _prepare(
+        self, ctx: QueryContext
+    ) -> tuple[Classification, int, list[Passage]]:
+        """Run pipeline steps 1-4: classify, embed, route, and retrieve.
+
+        Shared by :meth:`handle_query` and :meth:`handle_query_stream` so both
+        paths apply identical classification, threshold routing, and retrieval
+        behavior (including all failure containment).
+
+        Args:
+            ctx: The validated inbound query context.
+
+        Returns:
+            A ``(classification, detected_space_id, passages)`` triple.
+        """
         # 1 + 2: classify and embed concurrently; neither is allowed to abort
         # the pipeline (return_exceptions keeps a failure of one from cancelling
         # the other).
@@ -425,21 +503,7 @@ class Orchestrator:
         else:
             passages = []
 
-        # 5: generate the grounded answer (no-match / success / failed).
-        response = await self._generator.generate(ctx.text, passages)
-
-        # 6: write EXACTLY ONE Query_Log entry and record document access.
-        latency_ms = int((time.monotonic() - started) * 1000)
-        self._log_query(
-            ctx,
-            detected_space_id,
-            classification.confidence,
-            response,
-            passages,
-            latency_ms,
-        )
-
-        return response
+        return classification, detected_space_id, passages
 
     async def _safe_classify(self, text: str) -> Classification:
         """Classify ``text``, never raising (failures => General/confidence 0).

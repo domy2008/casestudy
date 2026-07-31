@@ -35,6 +35,7 @@ Design seams and guarantees:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Iterable, Protocol, Sequence, runtime_checkable
 
@@ -54,10 +55,22 @@ DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 CHAT_PATH = "/chat/completions"
 EMBEDDINGS_PATH = "/embeddings"
 
-#: Qwen-Max is used for both classification and RAG generation.
+#: Default chat model (document structuring, generic completions). Kept on
+#: Qwen-Max: structuring runs in the background where quality beats speed.
 CHAT_MODEL = "qwen-max"
+#: Intent classification model. A "pick one space" JSON task needs no
+#: heavyweight model; qwen-turbo answers in well under a second (latency win).
+CLASSIFY_MODEL = "qwen-turbo"
+#: RAG answer-generation model. qwen-plus is ~2-3x faster than qwen-max while
+#: still following the grounding/citation instructions reliably (latency win).
+GENERATION_MODEL = "qwen-plus"
 #: DashScope embedding model paired with the same credentials.
 EMBEDDING_MODEL = "text-embedding-v3"
+
+#: Default generated-token cap for RAG answers. Output length is the dominant
+#: latency cost, and the RAG prompt already asks for concise answers; ~600
+#: tokens comfortably fits the typical cited answer.
+GENERATION_MAX_TOKENS = 600
 
 # --- Per-call timeout budgets (seconds), see Req 8.8 --------------------
 
@@ -73,6 +86,34 @@ DEFAULT_MAX_RETRIES = 2
 DEFAULT_BACKOFF_BASE_S = 0.5
 #: HTTP status codes treated as transient and therefore retryable.
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _parse_sse_delta(line: str) -> str:
+    """Extract the content delta from one SSE line of a streamed completion.
+
+    Pure helper. OpenAI-compatible streaming sends lines like
+    ``data: {"choices":[{"delta":{"content":"..."}}]}`` terminated by
+    ``data: [DONE]``. Non-data lines, the DONE sentinel, and malformed or
+    content-less chunks all yield the empty string.
+
+    Args:
+        line: One line from the SSE response body.
+
+    Returns:
+        The chunk's text delta, or ``""`` when the line carries none.
+    """
+    line = line.strip()
+    if not line.startswith("data:"):
+        return ""
+    data = line[len("data:"):].strip()
+    if not data or data == "[DONE]":
+        return ""
+    try:
+        chunk = json.loads(data)
+        content = chunk["choices"][0].get("delta", {}).get("content")
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        return ""
+    return content or ""
 
 
 class DashScopeError(RuntimeError):
@@ -229,8 +270,10 @@ class DashScopeClient:
     ) -> str:
         """Chat completion tuned for intent classification.
 
-        Uses the classification timeout budget (5s) and JSON mode by default so
-        the classifier receives a parseable JSON object (Req 7.1, 8.8).
+        Uses :data:`CLASSIFY_MODEL` (qwen-turbo — fast, sufficient for a
+        structured pick-one task), the classification timeout budget (5s), and
+        JSON mode by default so the classifier receives a parseable JSON object
+        (Req 7.1, 8.8).
 
         Args:
             messages: Classification prompt messages.
@@ -245,6 +288,7 @@ class DashScopeClient:
         """
         return await self.chat_completion(
             messages,
+            model=CLASSIFY_MODEL,
             timeout=timeout,
             json_mode=json_mode,
             max_tokens=max_tokens,
@@ -257,19 +301,22 @@ class DashScopeClient:
         *,
         timeout: float = RAG_TIMEOUT_S,
         json_mode: bool = False,
-        max_tokens: int | None = None,
+        max_tokens: int | None = GENERATION_MAX_TOKENS,
         **extra: Any,
     ) -> str:
         """Chat completion tuned for RAG answer generation.
 
-        Uses the RAG timeout budget (10s, Req 8.8).
+        Uses :data:`GENERATION_MODEL` (qwen-plus — markedly faster than
+        qwen-max with comparable grounded-answer quality), the RAG timeout
+        budget (10s, Req 8.8), and a generated-token cap
+        (:data:`GENERATION_MAX_TOKENS`) since output length dominates latency.
 
         Args:
             messages: RAG prompt messages (grounding passages + user query).
             timeout: Per-call timeout; defaults to :data:`RAG_TIMEOUT_S`.
             json_mode: Whether to request a strict JSON object; defaults to
                 ``False`` for free-form answers.
-            max_tokens: Optional generated-token cap.
+            max_tokens: Generated-token cap; ``None`` disables it.
             **extra: Additional payload fields passed through unchanged.
 
         Returns:
@@ -277,11 +324,85 @@ class DashScopeClient:
         """
         return await self.chat_completion(
             messages,
+            model=GENERATION_MODEL,
             timeout=timeout,
             json_mode=json_mode,
             max_tokens=max_tokens,
             **extra,
         )
+
+    async def generate_stream(
+        self,
+        messages: Sequence[dict[str, Any]],
+        *,
+        timeout: float = RAG_TIMEOUT_S,
+        max_tokens: int | None = GENERATION_MAX_TOKENS,
+        **extra: Any,
+    ):
+        """Stream a RAG answer, yielding text deltas as they are generated.
+
+        Issues the same chat completion as :meth:`generate` with
+        ``stream: true`` and parses the SSE response, yielding each chunk's
+        content delta. Consumed by the web Test Chat's SSE endpoint so text
+        starts appearing within ~1s instead of after the full generation.
+
+        Retries are NOT applied here: once tokens have been yielded a retry
+        would duplicate output, so any failure surfaces to the caller (which
+        maps it to the standard failed response).
+
+        Args:
+            messages: RAG prompt messages (grounding passages + user query).
+            timeout: Read timeout between chunks; defaults to
+                :data:`RAG_TIMEOUT_S`.
+            max_tokens: Generated-token cap; ``None`` disables it.
+            **extra: Additional payload fields passed through unchanged.
+
+        Yields:
+            Text deltas (possibly empty strings are skipped).
+
+        Raises:
+            DashScopeTimeoutError: If the stream stalls past ``timeout``.
+            DashScopeError: On transport failures or an error status code.
+        """
+        payload: dict[str, Any] = {
+            "model": GENERATION_MODEL,
+            "messages": list(messages),
+            "stream": True,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        payload.update(extra)
+
+        api_key = self._resolve_api_key()
+        url = f"{self._base_url}{CHAT_PATH}"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with self._client.stream(
+                "POST", url, json=payload, headers=headers, timeout=timeout
+            ) as response:
+                if response.status_code >= 400:
+                    raise DashScopeError(
+                        f"DashScope streaming request to {CHAT_PATH} failed "
+                        f"with status {response.status_code}"
+                    )
+                async for line in response.aiter_lines():
+                    delta = _parse_sse_delta(line)
+                    if delta:
+                        yield delta
+        except httpx.TimeoutException as exc:
+            raise DashScopeTimeoutError(
+                f"DashScope streaming request to {CHAT_PATH} timed out "
+                f"after {timeout}s"
+            ) from exc
+        except httpx.TransportError as exc:
+            raise DashScopeError(
+                f"DashScope streaming request to {CHAT_PATH} failed: "
+                "transport error"
+            ) from exc
 
     async def embed(
         self,

@@ -36,7 +36,7 @@ Design seams:
 from __future__ import annotations
 
 import logging
-from typing import Callable, Protocol, Sequence, runtime_checkable
+from typing import AsyncIterator, Callable, Protocol, Sequence, runtime_checkable
 
 from app.ai.prompts import NO_MATCH_MESSAGE, build_rag_messages
 from app.core.models import GeneratedResponse, Passage
@@ -139,6 +139,63 @@ class ResponseGenerator:
         citations = self._unique_document_names(passages)
         self._record_access(passages)
         return GeneratedResponse(text=answer, citations=citations, status="success")
+
+    async def generate_stream(
+        self, query: str, passages: Sequence[Passage]
+    ) -> AsyncIterator[tuple[str, str | GeneratedResponse]]:
+        """Stream a response for ``query``, yielding deltas then a final result.
+
+        Event protocol: zero or more ``("delta", text_chunk)`` events followed
+        by exactly one terminal ``("done", GeneratedResponse)`` event. The
+        no-match, success, and failed outcomes mirror :meth:`generate` exactly
+        (same messages, statuses, citations, and access recording); only the
+        delivery is incremental. A failure mid-stream still emits a delta with
+        the could-not-process message so a partially rendered answer is
+        visibly terminated, then the failed terminal event.
+
+        Args:
+            query: The End_User query text.
+            passages: The passages retrieved for the routed Intent_Space.
+
+        Yields:
+            ``("delta", str)`` events, then one ``("done", GeneratedResponse)``.
+        """
+        if not passages:
+            yield ("delta", NO_MATCH_MESSAGE)
+            yield (
+                "done",
+                GeneratedResponse(
+                    text=NO_MATCH_MESSAGE, citations=[], status="no_match"
+                ),
+            )
+            return
+
+        messages = build_rag_messages(query, list(passages))
+        parts: list[str] = []
+        try:
+            async for delta in self._client.generate_stream(messages):
+                parts.append(delta)
+                yield ("delta", delta)
+        except Exception:  # noqa: BLE001 - any AI/timeout failure → Failed (Req 8.8/8.9)
+            logger.warning("streaming RAG generation failed; returning error response")
+            notice = ("\n\n" if parts else "") + COULD_NOT_PROCESS_MESSAGE
+            yield ("delta", notice)
+            yield (
+                "done",
+                GeneratedResponse(
+                    text=COULD_NOT_PROCESS_MESSAGE, citations=[], status="failed"
+                ),
+            )
+            return
+
+        citations = self._unique_document_names(passages)
+        self._record_access(passages)
+        yield (
+            "done",
+            GeneratedResponse(
+                text="".join(parts), citations=citations, status="success"
+            ),
+        )
 
     @staticmethod
     def _unique_document_names(passages: Sequence[Passage]) -> list[str]:
