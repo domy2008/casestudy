@@ -10,8 +10,9 @@ so text starts appearing within about a second.
 
 Rendered with Streamlit's native chat widgets (``st.chat_message`` /
 ``st.chat_input``); the conversation lives in ``st.session_state`` and can be
-cleared with one click. Answers show their ``Sources:`` citations and the
-generation status (success / no_match / failed) plus end-to-end latency.
+cleared with one click. Answers end with their ``Sources:`` citations; the
+generation status and latency are not shown in the chat (they remain
+available per query in Analytics).
 
 Import-safety
 -------------
@@ -62,13 +63,6 @@ STREAM_READ_TIMEOUT_S = 30.0
 #: Session-state key holding the conversation history.
 HISTORY_KEY = "test_chat_history"
 
-#: Status → badge caption shown under each assistant answer.
-STATUS_LABELS: dict[str, str] = {
-    "success": "✅ success",
-    "no_match": "🔍 no match",
-    "failed": "⚠️ failed",
-}
-
 
 def parse_sse_event(line: str) -> dict[str, Any] | None:
     """Parse one SSE line from ``/chat/query/stream`` into its JSON payload.
@@ -92,29 +86,23 @@ def parse_sse_event(line: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def format_stream_tail(final: dict[str, Any]) -> tuple[str, str]:
-    """Build the sources footer and status caption from the terminal event.
+def format_stream_tail(final: dict[str, Any]) -> str:
+    """Build the sources footer from the terminal event.
 
-    Pure helper: mirrors the IM ``Sources:`` formatting and produces the
-    status/latency caption shown under the streamed answer.
+    Pure helper mirroring the IM ``Sources:`` formatting. The status and
+    latency are intentionally not surfaced in the chat (they remain available
+    in Analytics for every query).
 
     Args:
         final: The terminal ``done`` event payload (may be empty on failure).
 
     Returns:
-        A ``(sources_markdown, caption)`` pair; ``sources_markdown`` is empty
-        when there are no citations.
+        The sources markdown line, or ``""`` when there are no citations.
     """
     citations = [c for c in (final.get("citations") or []) if c]
-    sources = (
+    return (
         "**Sources:** " + ", ".join(str(c) for c in citations) if citations else ""
     )
-    status = str(final.get("status") or "failed")
-    caption = STATUS_LABELS.get(status, status)
-    latency = final.get("latency_ms")
-    if isinstance(latency, int):
-        caption += f" · {latency} ms"
-    return sources, caption
 
 
 def _main() -> None:
@@ -140,8 +128,6 @@ def _main() -> None:
     for message in history:
         with st.chat_message(message["role"]):
             st.markdown(message["text"])
-            if message.get("caption"):
-                st.caption(message["caption"])
 
     prompt = st.chat_input("Ask the knowledge base…")
     if not prompt:
@@ -152,18 +138,17 @@ def _main() -> None:
         st.markdown(prompt)
 
     # Stream the answer token by token (SSE); the terminal event lands in
-    # ``final`` so the sources footer and status caption render at the end.
+    # ``final`` so the sources footer renders at the end.
     final: dict[str, Any] = {}
     with st.chat_message("assistant"):
         streamed = st.write_stream(_stream_answer(prompt, final))
         text = streamed if isinstance(streamed, str) else "".join(streamed)
-        sources, caption = format_stream_tail(final)
+        sources = format_stream_tail(final)
         if sources:
             st.markdown(sources)
             text += "\n\n" + sources
-        st.caption(caption)
 
-    history.append({"role": "assistant", "text": text, "caption": caption})
+    history.append({"role": "assistant", "text": text})
 
 
 def _stream_answer(prompt: str, final: dict[str, Any]) -> Iterator[str]:
