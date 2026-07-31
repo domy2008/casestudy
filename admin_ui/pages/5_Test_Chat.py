@@ -74,8 +74,48 @@ WEBCHAT_TOOL = "webchat"
 #: Maximum number of past questions listed in the sidebar history.
 RECENT_QUESTIONS_LIMIT = 20
 
-#: Sidebar labels are truncated to this many characters (ChatGPT-style list).
-SIDEBAR_LABEL_MAX = 28
+#: History labels are truncated to this many characters as a fallback; the
+#: CSS single-line ellipsis handles the visual cut at the column edge.
+SIDEBAR_LABEL_MAX = 40
+
+#: Height of the scrollable history panel in pixels.
+HISTORY_PANEL_HEIGHT_PX = 460
+
+
+def _inject_history_css() -> None:
+    """Style the history topic buttons as a compact, left-aligned list.
+
+    Streamlit gives keyed widgets a stable ``st-key-<key>`` wrapper class, so
+    the ``reask_*`` buttons can be restyled (left-aligned, single-line
+    ellipsis, quiet hover) without affecting any other button on the page.
+    """
+    import streamlit as st
+
+    st.markdown(
+        """
+        <style>
+          .ik-history-title {
+            font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em;
+            text-transform: uppercase; color: #64748b; margin: 4px 0 8px 4px;
+          }
+          div[class*="st-key-reask_"] { width: 100%; }
+          div[class*="st-key-reask_"] button {
+            display: block; width: 100%;
+            text-align: left; justify-content: flex-start;
+            padding: 6px 10px; min-height: 0;
+            border-radius: 8px; color: #334155;
+          }
+          div[class*="st-key-reask_"] button:hover {
+            background: #e2e8f0; color: #0f172a;
+          }
+          div[class*="st-key-reask_"] button p {
+            font-size: 0.88rem; line-height: 1.3;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def recent_webchat_questions(entries: Any) -> list[tuple[str, str]]:
@@ -164,13 +204,18 @@ def _main() -> None:
 
     history: list[dict[str, Any]] = st.session_state.setdefault(HISTORY_KEY, [])
 
+    _inject_history_css()
+
     # ChatGPT-style layout: history topics in a narrow left column, the
     # conversation in the wide right column.
     col_hist, col_chat = st.columns([1, 3], gap="medium")
 
     with col_hist:
-        st.markdown("**🕘 Recent**")
-        _render_recent_questions(col_hist)
+        st.markdown(
+            '<div class="ik-history-title">Recent</div>', unsafe_allow_html=True
+        )
+        panel = st.container(height=HISTORY_PANEL_HEIGHT_PX, border=False)
+        _render_recent_questions(panel)
 
     with col_chat:
         if history and st.button("🗑️ Clear conversation"):
