@@ -65,6 +65,9 @@ SCREEN_KEY = "dashboard"
 #: per-section partial failure (Req 9.5/9.7).
 DASHBOARD_SUMMARY_PATH = "/dashboard/summary"
 
+#: Backend endpoint proxying CloudWatch metrics/alarms for inline display.
+MONITORING_PATH = "/monitoring/cloudwatch"
+
 #: The document statuses the Dashboard always reports a count for, so a status
 #: with zero documents still shows up as ``0`` rather than vanishing (Req 9.5).
 DOCUMENT_STATUSES: tuple[str, ...] = ("Pending", "Processed", "Error")
@@ -388,13 +391,84 @@ def _main() -> None:
     finally:
         client.close()
 
-    section_header("Monitoring", module="dashboard")
-    st.markdown(
-        "📈 Infrastructure metrics and alarms (query latency p95, error "
-        "rate, backend health) live in the "
-        f"[CloudWatch dashboard]({CLOUDWATCH_DASHBOARD_URL}) "
-        "(AWS console sign-in required)."
+    _render_monitoring()
+
+
+def _render_monitoring() -> None:
+    """Render CloudWatch metrics/alarms inline (no AWS sign-in needed).
+
+    Fetches the backend's ``/monitoring/cloudwatch`` snapshot (served from the
+    EC2 instance role, cached ~60s) and renders alarm badges plus native
+    latency/error-rate charts, so the customer sees the CloudWatch data behind
+    the portal's own login. Falls back to the raw console link when the
+    snapshot is unavailable.
+    """
+    import streamlit as st
+
+    section_header("Monitoring (CloudWatch)", module="dashboard")
+
+    client = ApiClient()
+    try:
+        snapshot = client.get(MONITORING_PATH, params={"hours": 6})
+    except ApiError as exc:
+        st.warning(
+            f"CloudWatch data is unavailable: {exc.message} — you can still "
+            f"open the [CloudWatch console]({CLOUDWATCH_DASHBOARD_URL})."
+        )
+        return
+    finally:
+        client.close()
+
+    alarms = snapshot.get("alarms") or []
+    if alarms:
+        cols = st.columns(len(alarms))
+        for col, alarm in zip(cols, alarms):
+            state = str(alarm.get("state", ""))
+            icon = {"OK": "✅", "ALARM": "🚨"}.get(state, "⚪")
+            with col:
+                render_metric_card(
+                    str(alarm.get("name", "")).replace("IntelliKnow-", ""),
+                    f"{icon} {state}",
+                    module="dashboard",
+                )
+
+    series = snapshot.get("series") or {}
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.caption("Query latency (ms, 5-min buckets, last 6h)")
+        _plot_series(
+            {"p95": series.get("latency_p95"), "p50": series.get("latency_p50")}
+        )
+    with col_right:
+        st.caption("Error rate (%, 5-min buckets, last 6h)")
+        _plot_series({"error %": series.get("error_rate")})
+
+    st.caption(
+        f"Region {snapshot.get('region', '')} · refreshed "
+        f"{str(snapshot.get('fetched_at', ''))[:19].replace('T', ' ')} UTC · "
+        f"[open in CloudWatch console]({CLOUDWATCH_DASHBOARD_URL})"
     )
+
+
+def _plot_series(named_series: dict[str, Any]) -> None:
+    """Render one or more ``{timestamps, values}`` series as a line chart.
+
+    Args:
+        named_series: Label → series dict (``None`` entries are skipped).
+    """
+    import pandas as pd
+    import streamlit as st
+
+    frames = {}
+    for label, data in named_series.items():
+        if data and data.get("timestamps"):
+            frames[label] = pd.Series(
+                data["values"], index=pd.to_datetime(data["timestamps"])
+            )
+    if not frames:
+        st.info("No datapoints in this window yet.")
+        return
+    st.line_chart(pd.DataFrame(frames), height=220)
 
 
 if __name__ == "__main__":

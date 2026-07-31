@@ -110,7 +110,7 @@ If a test fails, the card shows the reason and the screen lists the recent error
 1. **Analytics** shows the query history (text, detected intent, confidence, status), the most-accessed documents, the most common spaces, and per-space accuracy.
 2. Mark the correct space for misclassified queries in the **verification** control — accuracy rates update from your verdicts, and adding keywords to spaces improves future routing.
 3. Export everything as CSV for offline reporting.
-4. Infrastructure metrics and alarms live in the **[CloudWatch dashboard](https://cn-north-1.console.amazonaws.cn/cloudwatch/home?region=cn-north-1#dashboards:name=IntelliKnow-KMS)** (AWS console sign-in required): query latency p50/p95, error rate, backend health, and the three alarm states (latency p95 > 3 s, error rate > 5%, backend unhealthy), all notifying the `intelliknow-alarms` SNS topic. The same link is on the portal's Dashboard screen under **Monitoring**.
+4. Infrastructure monitoring is embedded in the portal's **Dashboard → Monitoring (CloudWatch)** section — alarm badges plus latency p50/p95 and error-rate charts for the last 6 hours, **no AWS account needed** (the backend reads CloudWatch with the instance's read-only role and caches for 60 s). The three alarms (latency p95 > 3 s, error rate > 5%, backend unhealthy) notify the `intelliknow-alarms` SNS topic; operators with AWS console access can also open the **[IntelliKnow-KMS CloudWatch dashboard](https://cn-north-1.console.amazonaws.cn/cloudwatch/home?region=cn-north-1#dashboards:name=IntelliKnow-KMS)** directly.
 
 ---
 
