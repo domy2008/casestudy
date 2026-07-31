@@ -33,3 +33,6 @@ dist/
 
 # Teams app package build artifact
 deploy/teams-app/*.zip
+
+# Customer demo credentials handout — send separately, never commit
+DEMO_ACCESS.md

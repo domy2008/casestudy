@@ -2,14 +2,7 @@
 
 A Gen AI-powered Knowledge Management System. End users ask questions from **Telegram**, **Microsoft Teams**, or **WhatsApp** — or right in the web console's **Test Chat** — and receive concise, **cited** answers generated with Retrieval-Augmented Generation (RAG) over an admin-managed document knowledge base.
 
-Live demo: **https://kms.autobuy.top**
-
-| Portal access | |
-|---|---|
-| Account | `kmsadmin` |
-| Password | `IntelliKnow2026!` |
-
-> The browser prompts for these credentials once; they protect the demo admin console (dashboard, knowledge base, integrations, analytics, and Test Chat).
+Live demo: **https://kms.autobuy.top** (access credentials are provided separately)
 
 ---
 
