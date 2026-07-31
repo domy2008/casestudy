@@ -163,29 +163,47 @@ def test_history_row_to_display_maps_all_columns(page: ModuleType) -> None:
         "Detected Intent": "HR",
         "Confidence": "91%",
         "Status": "Success",
-        "Verified": "—",
+        "Verified": None,
     }
     # A verified entry resolves its verified space name.
     entry["verified_space_id"] = 2
     assert page.history_row_to_display(entry, space_names)["Verified"] == "Finance"
 
 
-def test_selected_row_index_shapes(page: ModuleType) -> None:
-    # Mapping-style selection event (and the shapes that mean "no selection").
-    assert page.selected_row_index({"selection": {"rows": [3, 5]}}) == 3
-    assert page.selected_row_index({"selection": {"rows": []}}) is None
-    assert page.selected_row_index({"selection": {}}) is None
-    assert page.selected_row_index({}) is None
-    assert page.selected_row_index(None) is None
+def test_pending_verifications_detects_new_and_changed_verdicts(page: ModuleType) -> None:
+    name_to_id = {"HR": 1, "Finance": 2}
+    snapshot = [
+        {"id": 10, "verified_space_id": None},  # newly verified -> submit
+        {"id": 11, "verified_space_id": 1},  # unchanged -> skip
+        {"id": 12, "verified_space_id": 1},  # corrected -> submit
+        {"id": 13, "verified_space_id": None},  # cleared cell -> skip
+        {"verified_space_id": None},  # no id -> skip
+    ]
+    state = {
+        "edited_rows": {
+            0: {"Verified": "HR"},
+            1: {"Verified": "HR"},
+            2: {"Verified": "Finance"},
+            3: {"Verified": None},
+            4: {"Verified": "HR"},
+        }
+    }
+    assert page.pending_verifications(state, snapshot, name_to_id) == [(10, 1), (12, 2)]
 
-    # Attribute-style selection event (what st.dataframe actually returns).
-    class _Sel:
-        rows = [0]
 
-    class _Event:
-        selection = _Sel()
-
-    assert page.selected_row_index(_Event()) == 0
+def test_pending_verifications_ignores_malformed_state(page: ModuleType) -> None:
+    name_to_id = {"HR": 1}
+    snapshot = [{"id": 1, "verified_space_id": None}]
+    # No state / no edits / malformed shapes -> nothing to submit.
+    assert page.pending_verifications(None, snapshot, name_to_id) == []
+    assert page.pending_verifications({}, snapshot, name_to_id) == []
+    assert page.pending_verifications({"edited_rows": "junk"}, snapshot, name_to_id) == []
+    # Unknown space name, out-of-range index, non-dict cells -> skipped.
+    state = {"edited_rows": {0: {"Verified": "Ghost"}, 9: {"Verified": "HR"}, 1: "junk"}}
+    assert page.pending_verifications(state, snapshot, name_to_id) == []
+    # String row indices (Streamlit serializes them as str) still resolve.
+    state = {"edited_rows": {"0": {"Verified": "HR"}}}
+    assert page.pending_verifications(state, snapshot, name_to_id) == [(1, 1)]
 
 
 def test_resolve_space_label_unknown_and_missing(page: ModuleType) -> None:
