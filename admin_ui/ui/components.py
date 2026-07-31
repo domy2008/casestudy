@@ -143,6 +143,10 @@ CARD_RADIUS_PX: int = 12
 #: Card inner padding in pixels (Req 9.3).
 CARD_PADDING_PX: int = 16
 
+#: Viewport width (px) below which the layout switches to its mobile form:
+#: columns stack vertically, padding tightens, and tables scroll horizontally.
+MOBILE_BREAKPOINT_PX: int = 640
+
 
 def card_html(
     body: str,
@@ -232,6 +236,30 @@ def inject_base_css() -> None:
         font-size: 1.15rem;
         font-weight: 600;
         color: {NEUTRAL['text']};
+      }}
+      /* Mobile responsiveness: on narrow viewports, stack side-by-side
+         columns vertically, tighten page padding, scale down card values,
+         and let wide tables scroll horizontally instead of clipping. */
+      @media (max-width: {MOBILE_BREAKPOINT_PX}px) {{
+        .block-container {{
+          padding-left: 1rem;
+          padding-right: 1rem;
+          padding-top: 2.5rem;
+        }}
+        div[data-testid="stHorizontalBlock"] {{
+          flex-direction: column;
+        }}
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+          width: 100% !important;
+          flex: 1 1 100% !important;
+          min-width: 100% !important;
+        }}
+        .ik-card-value {{ font-size: 1.3rem; }}
+        div[data-testid="stDataFrame"],
+        div[data-testid="stTable"] {{
+          overflow-x: auto;
+        }}
       }}
     </style>
     """
