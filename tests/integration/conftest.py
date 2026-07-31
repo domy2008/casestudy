@@ -95,6 +95,14 @@ class FakeDashScope:
             raise self.generate_error
         return self.answer
 
+    async def generate_stream(self, messages):
+        """Yield the configured answer in small chunks (or raise)."""
+        if self.generate_error is not None:
+            raise self.generate_error
+        text = self.answer
+        for i in range(0, len(text), 16):
+            yield text[i : i + 16]
+
     async def chat_completion(self, messages, **kwargs) -> str:
         """Return the configured structured document text."""
         return self.structured_text

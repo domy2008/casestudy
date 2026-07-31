@@ -140,17 +140,22 @@ class QueryDispatcher:
     async def dispatch(self, ctx: QueryContext) -> None:
         """Process ``ctx`` under the deadline and deliver the result.
 
-        Runs ``orchestrator.handle_query`` under a
-        :data:`QUERY_DEADLINE_SECONDS` deadline. On success the response is
-        formatted for the tool and delivered; on deadline expiry (Req 2.5) or an
-        unexpected pipeline failure the could-not-process message is delivered
-        instead. Delivery itself is retried per Req 2.6 and, on final failure,
-        logged per Req 2.7 — all without ever raising back to the caller so a
-        single query can never break the intake loop (Req 2.8).
+        When the adapter supports streaming delivery (``supports_streaming``,
+        e.g. Telegram's send-then-edit loop) and the orchestrator exposes
+        ``handle_query_stream``, the answer is delivered incrementally so text
+        appears within about a second; otherwise the classic
+        process-then-deliver path runs. Both paths share the same deadline,
+        could-not-process fallback, and never-raise guarantees (Req 2.5/2.8).
 
         Args:
             ctx: The validated inbound query context to process and answer.
         """
+        if getattr(self._adapter, "supports_streaming", False) and hasattr(
+            self._orchestrator, "handle_query_stream"
+        ):
+            await self._dispatch_streaming(ctx)
+            return
+
         response = await self._process(ctx)
         if response is not None:
             text = self._safe_format(response)
@@ -159,6 +164,44 @@ class QueryDispatcher:
             # query could not be processed (Req 2.5).
             text = COULD_NOT_PROCESS_MESSAGE
         await self._deliver(ctx, text)
+
+    async def _dispatch_streaming(self, ctx: QueryContext) -> None:
+        """Stream the answer to the adapter under the processing deadline.
+
+        Drives ``orchestrator.handle_query_stream`` into the adapter's
+        ``send_stream`` (send-then-edit delivery). On deadline expiry or any
+        failure the could-not-process message is delivered through the classic
+        retried path instead, and nothing ever raises back to the intake loop
+        (Req 2.5/2.8). Note that on a mid-stream failure the End_User may see
+        a partial message followed by the could-not-process message.
+
+        Args:
+            ctx: The validated inbound query context to process and answer.
+        """
+        try:
+            await asyncio.wait_for(
+                self._adapter.send_stream(
+                    ctx.conversation_ref,
+                    self._orchestrator.handle_query_stream(ctx),
+                ),
+                timeout=self._deadline_s,
+            )
+            return
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Streaming query %s exceeded the %gs deadline; "
+                "delivering could-not-process message",
+                ctx.query_id,
+                self._deadline_s,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - stream failure => could-not-process
+            logger.exception(
+                "Streaming query %s failed; delivering could-not-process message",
+                ctx.query_id,
+            )
+        await self._deliver(ctx, COULD_NOT_PROCESS_MESSAGE)
 
     async def _process(self, ctx: QueryContext) -> GeneratedResponse | None:
         """Run the pipeline under the 30s deadline (Req 2.5).

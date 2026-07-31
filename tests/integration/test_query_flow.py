@@ -30,6 +30,7 @@ from .conftest import HR_SPACE_ID, make_query_context
 
 TOKEN = "TEST-TOKEN"
 SEND_URL = f"{TELEGRAM_API_BASE}/bot{TOKEN}/sendMessage"
+EDIT_URL = f"{TELEGRAM_API_BASE}/bot{TOKEN}/editMessageText"
 
 LEAVE_QUERY = "How many days of annual leave do employees receive per year?"
 LEAVE_DOC_BODY = (
@@ -70,11 +71,16 @@ async def _run_message(stack, adapter, text: str) -> None:
 
 @respx.mock
 async def test_telegram_happy_path_routes_above_threshold_and_delivers(stack):
-    """Message → classify → retrieve → RAG → cited reply on the matched space."""
+    """Message → classify → retrieve → RAG → streamed, cited reply."""
     doc_id = await stack.ingest(name="leave_policy.txt", body=LEAVE_DOC_BODY)
     assert doc_id > 0
     stack.ai.classify_json = f'{{"space_id": {HR_SPACE_ID}, "confidence": 95}}'
     route = respx.post(SEND_URL).mock(
+        return_value=httpx.Response(
+            200, json={"ok": True, "result": {"message_id": 7}}
+        )
+    )
+    edit_route = respx.post(EDIT_URL).mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {}})
     )
 
@@ -84,11 +90,13 @@ async def test_telegram_happy_path_routes_above_threshold_and_delivers(stack):
     finally:
         await adapter.aclose()
 
-    # Reply delivered once, grounded in the corpus, citing the source doc.
+    # Streaming delivery: one initial message, then the final edit carries the
+    # full grounded reply with citations (and the 👍/👎 keyboard is only
+    # attached when a feedback recorder is wired, which this stack omits).
     assert route.call_count == 1
-    sent = _sent_texts(route)[0]
-    assert "20 days of annual leave" in sent
-    assert "Sources:" in sent and "leave_policy.txt" in sent
+    final = _sent_texts(edit_route)[-1]
+    assert "20 days of annual leave" in final
+    assert "Sources:" in final and "leave_policy.txt" in final
 
     # Routed to the matched HR space with a Success log entry (Req 7.2, 7.6).
     row = stack.conn.execute("SELECT * FROM query_log").fetchone()
@@ -103,6 +111,11 @@ async def test_below_threshold_falls_back_to_general_space(stack):
     await stack.ingest(name="leave_policy.txt", body=LEAVE_DOC_BODY)
     stack.ai.classify_json = f'{{"space_id": {HR_SPACE_ID}, "confidence": 40}}'
     route = respx.post(SEND_URL).mock(
+        return_value=httpx.Response(
+            200, json={"ok": True, "result": {"message_id": 7}}
+        )
+    )
+    edit_route = respx.post(EDIT_URL).mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {}})
     )
 
@@ -113,7 +126,7 @@ async def test_below_threshold_falls_back_to_general_space(stack):
         await adapter.aclose()
 
     # General holds no documents → the clear no-match message (Req 8.3/8.4).
-    assert NO_MATCH_MESSAGE in _sent_texts(route)[0]
+    assert NO_MATCH_MESSAGE in _sent_texts(edit_route)[-1]
     general_id = int(IntentSpaceRepository(stack.conn).get_general()["id"])
     row = stack.conn.execute("SELECT * FROM query_log").fetchone()
     assert row["detected_space_id"] == general_id
@@ -126,6 +139,11 @@ async def test_generation_failure_delivers_error_and_logs_failed(stack):
     await stack.ingest(name="leave_policy.txt", body=LEAVE_DOC_BODY)
     stack.ai.generate_error = RuntimeError("dashscope down")
     route = respx.post(SEND_URL).mock(
+        return_value=httpx.Response(
+            200, json={"ok": True, "result": {"message_id": 7}}
+        )
+    )
+    edit_route = respx.post(EDIT_URL).mock(
         return_value=httpx.Response(200, json={"ok": True, "result": {}})
     )
 
@@ -135,6 +153,7 @@ async def test_generation_failure_delivers_error_and_logs_failed(stack):
     finally:
         await adapter.aclose()
 
-    assert COULD_NOT_PROCESS_MESSAGE in _sent_texts(route)[0]
+    final_texts = _sent_texts(route) + _sent_texts(edit_route)
+    assert any(COULD_NOT_PROCESS_MESSAGE in t for t in final_texts)
     row = stack.conn.execute("SELECT * FROM query_log").fetchone()
     assert row["response_status"] == "Failed"

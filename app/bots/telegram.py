@@ -55,10 +55,16 @@ __all__ = [
     "SOURCES_HEADER",
     "PROXY_MAX_RETRIES",
     "LONG_POLL_TIMEOUT_SECONDS",
+    "STREAM_EDIT_INTERVAL_S",
+    "STREAM_MIN_FIRST_CHARS",
+    "FEEDBACK_CALLBACK_PREFIX",
     "TelegramConfigError",
     "TelegramProxyError",
     "ErrorLog",
     "QueryHandler",
+    "FeedbackRecorder",
+    "build_feedback_keyboard",
+    "parse_feedback_callback",
     "build_sources_footer",
     "strip_markdown",
     "format_telegram_message",
@@ -127,6 +133,67 @@ class ErrorLog(Protocol):
 
 # A forwarded-query handler receives the reply address and validated text.
 QueryHandler = Callable[[dict, str], Awaitable[None]]
+
+# A feedback recorder receives (query_log_id, verdict) where verdict is
+# "up"/"down"; returns True when the verdict was recorded.
+FeedbackRecorder = Callable[[int, str], bool]
+
+# callback_data prefix for the 👍/👎 inline keyboard buttons.
+FEEDBACK_CALLBACK_PREFIX = "fb"
+
+# Streaming delivery pacing: minimum seconds between message edits (respects
+# Telegram's edit rate limits) and minimum characters before the first send.
+STREAM_EDIT_INTERVAL_S = 1.5
+STREAM_MIN_FIRST_CHARS = 20
+
+
+def build_feedback_keyboard(query_log_id: int) -> dict:
+    """Build the 👍/👎 inline keyboard markup for an answer message.
+
+    Args:
+        query_log_id: The Query_Log row the verdict will be recorded against.
+
+    Returns:
+        A Telegram ``reply_markup`` dict with one row of two buttons whose
+        ``callback_data`` encodes ``fb:<id>:<verdict>``.
+    """
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "👍",
+                    "callback_data": f"{FEEDBACK_CALLBACK_PREFIX}:{query_log_id}:up",
+                },
+                {
+                    "text": "👎",
+                    "callback_data": f"{FEEDBACK_CALLBACK_PREFIX}:{query_log_id}:down",
+                },
+            ]
+        ]
+    }
+
+
+def parse_feedback_callback(data: str | None) -> tuple[int, str] | None:
+    """Parse a feedback button's ``callback_data`` into ``(id, verdict)``.
+
+    Args:
+        data: The raw ``callback_data`` string from a ``callback_query``.
+
+    Returns:
+        ``(query_log_id, verdict)`` for a well-formed ``fb:<id>:<up|down>``
+        payload, otherwise ``None``.
+    """
+    if not isinstance(data, str):
+        return None
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != FEEDBACK_CALLBACK_PREFIX:
+        return None
+    if parts[2] not in ("up", "down"):
+        return None
+    try:
+        return int(parts[1]), parts[2]
+    except ValueError:
+        return None
 
 
 def build_sources_footer(citations: list[str]) -> str:
@@ -251,6 +318,7 @@ class TelegramAdapter:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         token_resolver: Callable[[], str | None] | None = None,
         error_log: ErrorLog | None = None,
+        feedback_recorder: FeedbackRecorder | None = None,
         api_base: str = TELEGRAM_API_BASE,
         proxy_max_retries: int = PROXY_MAX_RETRIES,
         long_poll_timeout: int = LONG_POLL_TIMEOUT_SECONDS,
@@ -275,6 +343,10 @@ class TelegramAdapter:
                 ``None``). Defaults to reading it from the Credential_Store.
             error_log: Optional sink recording each proxy failure with tool,
                 operation, and reason (Req 12.6).
+            feedback_recorder: Optional callback recording an End_User 👍/👎
+                verdict as ``(query_log_id, verdict)``. When present, answer
+                messages carry a feedback inline keyboard and
+                ``callback_query`` updates are handled.
             api_base: Base URL of the Telegram Bot API (override in tests).
             proxy_max_retries: Retries after a proxy connectivity failure
                 (Req 12.6).
@@ -287,6 +359,7 @@ class TelegramAdapter:
         self._client_factory = client_factory
         self._token_resolver = token_resolver
         self._error_log = error_log
+        self._feedback_recorder = feedback_recorder
         self._api_base = api_base.rstrip("/")
         self._proxy_max_retries = proxy_max_retries
         self._long_poll_timeout = long_poll_timeout
@@ -432,21 +505,170 @@ class TelegramAdapter:
 
     # --- FrontendAdapter interface -------------------------------------
 
-    async def send(self, conversation_ref: dict, text: str) -> None:
+    async def send(
+        self,
+        conversation_ref: dict,
+        text: str,
+        *,
+        reply_markup: dict | None = None,
+    ) -> int | None:
         """Deliver a text message to a Telegram chat through the proxy.
 
         Args:
             conversation_ref: Reply address containing a ``"chat_id"`` key.
             text: The message body (already formatted by :meth:`format`).
+            reply_markup: Optional inline keyboard markup (e.g. the feedback
+                buttons from :func:`build_feedback_keyboard`).
+
+        Returns:
+            The sent message's ``message_id`` when Telegram reports one,
+            otherwise ``None``.
 
         Raises:
             TelegramProxyError: If delivery fails after exhausting proxy
                 retries (Req 12.6).
         """
-        payload = {"chat_id": conversation_ref["chat_id"], "text": text}
-        await self._call_with_proxy_retries(
+        payload: dict = {"chat_id": conversation_ref["chat_id"], "text": text}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        data = await self._call_with_proxy_retries(
             "sendMessage", http_verb="POST", json=payload
         )
+        result = data.get("result") if isinstance(data, dict) else None
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        return message_id if isinstance(message_id, int) else None
+
+    # --- streaming delivery (edit-message loop) --------------------------
+
+    # Marks this adapter as able to consume the orchestrator's streaming
+    # events; the dispatcher checks this attribute (duck-typed capability).
+    supports_streaming: bool = True
+
+    async def send_stream(self, conversation_ref: dict, events) -> GeneratedResponse:
+        """Deliver an answer incrementally via a send-then-edit loop.
+
+        Consumes the orchestrator's ``("delta", str)`` / ``("done",
+        GeneratedResponse)`` events: the first ~:data:`STREAM_MIN_FIRST_CHARS`
+        characters trigger an initial ``sendMessage`` so text appears within
+        about a second, subsequent growth is applied with ``editMessageText``
+        at most every :data:`STREAM_EDIT_INTERVAL_S` seconds (respecting
+        Telegram's edit rate limits), and the terminal event triggers a final
+        edit carrying the fully formatted message — ``Sources:`` footer,
+        length cap — plus the 👍/👎 feedback keyboard on a successful answer.
+        Mid-stream edit failures are swallowed (the final edit still runs);
+        a failed final delivery raises so the caller can handle it.
+
+        Args:
+            conversation_ref: Reply address containing a ``"chat_id"`` key.
+            events: Async iterator of orchestrator streaming events.
+
+        Returns:
+            The final :class:`GeneratedResponse` from the ``"done"`` event.
+
+        Raises:
+            TelegramProxyError: If the final delivery fails after retries.
+        """
+        import time as _time
+
+        chat_id = conversation_ref["chat_id"]
+        buffer = ""
+        message_id: int | None = None
+        last_edit = 0.0
+        response: GeneratedResponse | None = None
+
+        async for kind, payload in events:
+            if kind == "done":
+                response = payload
+                break
+            buffer += payload
+            preview = strip_markdown(buffer)[: TELEGRAM_MAX_MESSAGE_CHARS - 2] + " …"
+            now = _time.monotonic()
+            if message_id is None:
+                if len(buffer) >= STREAM_MIN_FIRST_CHARS:
+                    # The first visible text; a failure here aborts streaming
+                    # so the caller can fall back to an error message.
+                    message_id = await self.send(conversation_ref, preview)
+                    last_edit = now
+            elif now - last_edit >= STREAM_EDIT_INTERVAL_S:
+                await self._edit_message_safe(chat_id, message_id, preview)
+                last_edit = now
+
+        if response is None:  # defensive: the orchestrator always emits "done"
+            response = GeneratedResponse(text=buffer, citations=[], status="failed")
+
+        final_text = self.format(response)
+        reply_markup = None
+        if (
+            self._feedback_recorder is not None
+            and response.status == "success"
+            and response.query_log_id is not None
+        ):
+            reply_markup = build_feedback_keyboard(response.query_log_id)
+
+        if message_id is None:
+            await self.send(conversation_ref, final_text, reply_markup=reply_markup)
+        else:
+            await self._edit_message_final(
+                conversation_ref, message_id, final_text, reply_markup
+            )
+        return response
+
+    async def _edit_message_safe(
+        self, chat_id: object, message_id: int, text: str
+    ) -> None:
+        """Apply a mid-stream ``editMessageText``, swallowing any failure.
+
+        A transient edit failure (rate limit, proxy hiccup) must not abort the
+        stream — the next edit or the final render will catch the text up.
+
+        Args:
+            chat_id: The destination chat id.
+            message_id: The message being progressively edited.
+            text: The new (preview) message text.
+        """
+        try:
+            await self._call_with_proxy_retries(
+                "editMessageText",
+                http_verb="POST",
+                json={"chat_id": chat_id, "message_id": message_id, "text": text},
+            )
+        except Exception as exc:  # noqa: BLE001 - never abort the stream
+            logger.debug("mid-stream edit failed (will catch up later): %s", exc)
+
+    async def _edit_message_final(
+        self,
+        conversation_ref: dict,
+        message_id: int,
+        text: str,
+        reply_markup: dict | None,
+    ) -> None:
+        """Apply the final ``editMessageText``; fall back to a fresh send.
+
+        Args:
+            conversation_ref: Reply address containing a ``"chat_id"`` key.
+            message_id: The streamed message to finalize.
+            text: The fully formatted final message text.
+            reply_markup: Optional feedback keyboard to attach.
+
+        Raises:
+            TelegramProxyError: If both the edit and the fallback send fail.
+        """
+        payload: dict = {
+            "chat_id": conversation_ref["chat_id"],
+            "message_id": message_id,
+            "text": text,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        try:
+            await self._call_with_proxy_retries(
+                "editMessageText", http_verb="POST", json=payload
+            )
+        except TelegramProxyError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - e.g. 400 message-not-modified
+            logger.warning("final edit failed; sending a fresh message: %s", exc)
+            await self.send(conversation_ref, text, reply_markup=reply_markup)
 
     def format(self, response: GeneratedResponse) -> str:
         """Format a response as plain text + ``Sources:`` footer for Telegram.
@@ -526,6 +748,11 @@ class TelegramAdapter:
             update: A single raw Telegram update object.
             handler: Async callback invoked with the reply address and text.
         """
+        callback = update.get("callback_query")
+        if isinstance(callback, dict):
+            await self._handle_feedback_callback(callback)
+            return
+
         message = update.get("message") or update.get("edited_message")
         if not isinstance(message, dict):
             return
@@ -550,6 +777,58 @@ class TelegramAdapter:
                     chat_id,
                     exc,
                 )
+
+    async def _handle_feedback_callback(self, callback: dict) -> None:
+        """Record a 👍/👎 button press and acknowledge it (best-effort).
+
+        Parses the ``callback_data`` (``fb:<query_log_id>:<verdict>``),
+        records the verdict via the injected recorder, answers the callback so
+        the End_User sees a confirmation toast, and removes the buttons so a
+        query is voted on at most once. Every step is guarded — feedback must
+        never break the polling loop.
+
+        Args:
+            callback: The raw ``callback_query`` object from an update.
+        """
+        parsed = parse_feedback_callback(callback.get("data"))
+        recorded = False
+        if parsed is not None and self._feedback_recorder is not None:
+            query_log_id, verdict = parsed
+            try:
+                recorded = bool(self._feedback_recorder(query_log_id, verdict))
+            except Exception:  # noqa: BLE001 - feedback is strictly best-effort
+                logger.exception("feedback recorder failed; continuing")
+
+        # Acknowledge the tap (dismisses Telegram's loading spinner).
+        callback_id = callback.get("id")
+        if callback_id is not None:
+            toast = (
+                "Thanks for your feedback! 🙏"
+                if recorded
+                else "Feedback could not be recorded."
+            )
+            try:
+                await self._call_with_proxy_retries(
+                    "answerCallbackQuery",
+                    http_verb="POST",
+                    json={"callback_query_id": callback_id, "text": toast},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("answerCallbackQuery failed: %s", exc)
+
+        # Remove the buttons after a successful vote (one vote per answer).
+        message = callback.get("message") or {}
+        chat_id = (message.get("chat") or {}).get("id")
+        message_id = message.get("message_id")
+        if recorded and chat_id is not None and message_id is not None:
+            try:
+                await self._call_with_proxy_retries(
+                    "editMessageReplyMarkup",
+                    http_verb="POST",
+                    json={"chat_id": chat_id, "message_id": message_id},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("removing feedback keyboard failed: %s", exc)
 
     async def run_polling(
         self,
