@@ -26,6 +26,7 @@ from app.bots.telegram import (
     TRUNCATION_INDICATOR,
     build_sources_footer,
     format_telegram_message,
+    strip_markdown,
 )
 from app.core.models import GeneratedResponse
 
@@ -60,7 +61,9 @@ def test_telegram_formatting_respects_limit_and_preserves_citations(
     assert len(result) <= TELEGRAM_MAX_MESSAGE_CHARS
 
     footer = build_sources_footer(citations)
-    naive_full = body + footer
+    # The body is normalized for plain-text frontends (Markdown markers such
+    # as ** are stripped) before the length budget is applied.
+    naive_full = strip_markdown(body) + footer
     truncated = len(naive_full) > TELEGRAM_MAX_MESSAGE_CHARS
 
     if not truncated:

@@ -195,3 +195,20 @@ def test_format_delegates_to_message_formatter() -> None:
     assert "Sources:" in message
     assert "hr_handbook.pdf" in message
     assert len(message) <= 4096
+
+
+def test_format_strips_markdown_markers() -> None:
+    """Markdown the model emits never reaches the plain-text message (Req 8.5)."""
+    adapter = TelegramAdapter(credential_store=_FakeStore())
+    response = GeneratedResponse(
+        text="## 休假制度\n- **年假**: 工龄0-2年 10天\n- __病假__: 每年`10`天\n- 2*3=6 stays",
+        citations=["hr_考勤与休假制度.md"],
+        status="success",
+    )
+    message = adapter.format(response)
+    assert "**" not in message and "__" not in message and "`" not in message
+    assert "##" not in message
+    assert "- 年假: 工龄0-2年 10天" in message
+    assert "病假: 每年10天" in message
+    # A lone asterisk is literal content and must survive untouched.
+    assert "2*3=6 stays" in message

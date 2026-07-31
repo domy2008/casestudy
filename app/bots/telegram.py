@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Protocol
@@ -59,6 +60,7 @@ __all__ = [
     "ErrorLog",
     "QueryHandler",
     "build_sources_footer",
+    "strip_markdown",
     "format_telegram_message",
     "TelegramAdapter",
 ]
@@ -147,6 +149,38 @@ def build_sources_footer(citations: list[str]) -> str:
     return f"\n\n{SOURCES_HEADER}\n{lines}"
 
 
+# Markdown markers the LLM commonly emits that Telegram/WhatsApp plain-text
+# messages render literally (e.g. a visible "**年假**"). Each pattern maps to
+# its unstyled replacement; single-asterisk emphasis is deliberately NOT
+# stripped because a lone "*" is too likely to be literal content.
+_MARKDOWN_MARKERS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), r"\1"),  # **bold**
+    (re.compile(r"__(.+?)__", re.DOTALL), r"\1"),  # __bold__
+    (re.compile(r"`([^`\n]+)`"), r"\1"),  # `inline code`
+    (re.compile(r"^#{1,6}\s+", re.MULTILINE), ""),  # # headings
+)
+
+
+def strip_markdown(text: str) -> str:
+    """Remove Markdown emphasis markers for plain-text frontends (Req 8.5).
+
+    Telegram (without a ``parse_mode``) and WhatsApp render message bodies as
+    plain text, so Markdown the model emits — ``**bold**``, ``__bold__``,
+    backtick code spans, and ``#`` heading prefixes — shows up as literal
+    punctuation noise. This strips the markers while keeping their inner text;
+    list dashes and other plain characters are left untouched.
+
+    Args:
+        text: The generated answer body, possibly containing Markdown.
+
+    Returns:
+        The text with emphasis markers removed.
+    """
+    for pattern, replacement in _MARKDOWN_MARKERS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 def format_telegram_message(response: GeneratedResponse) -> str:
     """Format a generated response for Telegram within the length limit.
 
@@ -170,7 +204,7 @@ def format_telegram_message(response: GeneratedResponse) -> str:
         The formatted message, guaranteed to be at most
         :data:`TELEGRAM_MAX_MESSAGE_CHARS` characters long.
     """
-    body = response.text or ""
+    body = strip_markdown(response.text or "")
     footer = build_sources_footer(response.citations)
     full = body + footer
 
