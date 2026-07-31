@@ -4,6 +4,13 @@ A Gen AI-powered Knowledge Management System. End users ask questions from **Tel
 
 Live demo: **https://kms.autobuy.top**
 
+| Portal access | |
+|---|---|
+| Account | `kmsadmin` |
+| Password | `IntelliKnow2026!` |
+
+> The browser prompts for these credentials once; they protect the demo admin console (dashboard, knowledge base, integrations, analytics, and Test Chat).
+
 ---
 
 ## Part 1 · Features
