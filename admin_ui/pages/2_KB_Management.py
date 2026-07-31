@@ -389,6 +389,28 @@ def assign_space(client: ApiClient, document_id: int, space_id: int) -> Any:
     return client.put(f"/documents/{document_id}/space", json={"space_id": space_id})
 
 
+def suggest_space(client: ApiClient, name: str, content: bytes) -> Any:
+    """Ask the backend which Intent_Space a document belongs to.
+
+    Calls ``POST /documents/suggest-space`` with the base64-encoded file so
+    the AI can classify the extracted text against the configured spaces.
+
+    Args:
+        client: The API client.
+        name: The file name (its extension picks the loader).
+        content: The raw file bytes.
+
+    Returns:
+        The response dict; ``{"suggestion": null}`` when no suggestion could
+        be made.
+    """
+    body = {
+        "name": name,
+        "content_b64": base64.b64encode(content).decode("ascii"),
+    }
+    return client.post("/documents/suggest-space", json=body)
+
+
 # ---------------------------------------------------------------------------
 # Streamlit rendering (invoked only under __main__)
 # ---------------------------------------------------------------------------
@@ -412,6 +434,12 @@ def _render_upload(client: ApiClient, spaces_by_id: dict[int, str]) -> None:
     if flash:
         level, text = flash
         (st.success if level == "success" else st.error)(text)
+
+    # Apply an accepted AI space suggestion BEFORE the selectbox is created
+    # (Streamlit forbids changing a widget's state after instantiation).
+    pending_suggestion = st.session_state.pop("kb_space_suggestion_apply", None)
+    if pending_suggestion is not None and pending_suggestion in spaces_by_id:
+        st.session_state["kb_upload_space"] = pending_suggestion
 
     # Step 1 — destination catalog first, so the target is explicit.
     target_space_id: int | None = None
@@ -452,6 +480,9 @@ def _render_upload(client: ApiClient, spaces_by_id: dict[int, str]) -> None:
     )
     st.caption(
         f"Ready: **{uploaded.name}** ({human_size(size_bytes)}) → **{space_name}**"
+    )
+    _render_space_suggestion(
+        st, client, spaces_by_id, uploaded.name, content, target_space_id
     )
     if not st.button(
         f"Step 3 — Upload to {space_name}", key="kb_upload_btn", type="primary"
@@ -494,6 +525,52 @@ def _render_upload(client: ApiClient, spaces_by_id: dict[int, str]) -> None:
     )
     st.session_state["kb_uploader_nonce"] = nonce + 1
     st.rerun()
+
+
+def _render_space_suggestion(
+    st: Any,
+    client: ApiClient,
+    spaces_by_id: dict[int, str],
+    file_name: str,
+    content: bytes,
+    target_space_id: int | None,
+) -> None:
+    """Render the AI Intent_Space suggestion for the selected file.
+
+    A "Suggest space" button classifies the document's extracted text; the
+    suggestion (space + confidence) is cached per file in session state and
+    can be applied to the Step-1 selectbox with one click. The Admin always
+    confirms — the suggestion never uploads anything by itself.
+    """
+    cache_key = f"kb_space_suggestion_{file_name}_{len(content)}"
+
+    if st.button("✨ Suggest space (AI)", key="kb_suggest_space_btn"):
+        with st.spinner("Classifying the document…"):
+            try:
+                st.session_state[cache_key] = suggest_space(
+                    client, file_name, content
+                )
+            except ApiError as exc:
+                st.warning(f"Suggestion unavailable: {exc.message}")
+                return
+
+    result = st.session_state.get(cache_key) or {}
+    suggestion = result.get("suggestion")
+    if not suggestion:
+        if cache_key in st.session_state:
+            st.info("No confident suggestion — keep your manual choice.")
+        return
+
+    suggested_id = suggestion.get("space_id")
+    suggested_name = suggestion.get("space_name", f"Space {suggested_id}")
+    confidence = suggestion.get("confidence", 0)
+    if suggested_id == target_space_id:
+        st.success(f"AI agrees: **{suggested_name}** ({confidence:.0f}% confidence).")
+        return
+    st.info(f"AI suggests **{suggested_name}** ({confidence:.0f}% confidence).")
+    if st.button(f"Use {suggested_name}", key="kb_apply_suggestion_btn"):
+        st.session_state["kb_space_suggestion_apply"] = suggested_id
+        st.rerun()
 
 
 def _render_filters(spaces_by_id: dict[int, str]) -> dict[str, Any]:

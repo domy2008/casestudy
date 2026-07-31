@@ -257,6 +257,12 @@ sequenceDiagram
 | Buffer / logging overhead | 290 ms | Query_Log writes are best-effort |
 | **Total** | **3,000 ms** | |
 
+This is a **monitored SLO, not a hard deadline**: generation time is dominated
+by the AI model, so rather than truncating answers at 3s, every query's
+latency is recorded in the Query_Log and published to CloudWatch, where an
+alarm fires on sustained p95 above 3,000 ms (`latency_alarm_ms` setting).
+Answers exceeding the budget are delivered in full rather than cut off.
+
 ### Latency and Failure Guards
 
 - Every external AI call has an explicit timeout: classification 5s, embedding

@@ -517,7 +517,64 @@ def _render_space_editor(client: ApiClient, spaces: list[dict[str, Any]]) -> Non
             st.error(exc.message)
 
     if editing:
+        _render_keyword_suggestions(client, current)
         _render_delete_control(client, current)
+
+
+def _render_keyword_suggestions(client: ApiClient, space: dict[str, Any]) -> None:
+    """Render the AI keyword-suggestion flow for an existing space.
+
+    Asks the backend to propose new routing keywords from queries an Admin
+    verified as belonging to this space but that were misrouted elsewhere
+    (``POST /spaces/{id}/suggest-keywords``). The Admin picks which
+    suggestions to accept; accepted keywords are merged into the space via
+    the regular ``PUT /spaces/{id}`` so all validation still applies.
+    """
+    import streamlit as st
+
+    space_id = _first_present(space, "id")
+    if space_id is None:
+        return
+    state_key = f"kw_suggestions_{space_id}"
+
+    st.markdown("**✨ AI keyword suggestions**")
+    st.caption(
+        "Proposes new keywords from misclassified queries you verified in "
+        "Analytics, to improve routing to this space."
+    )
+    if st.button("Suggest keywords", key=f"suggest_kw_btn_{space_id}"):
+        with st.spinner("Analyzing misrouted queries…"):
+            try:
+                result = client.post(f"/spaces/{space_id}/suggest-keywords")
+            except ApiError as exc:
+                st.error(f"Suggestion failed: {exc.message}")
+                return
+        st.session_state[state_key] = result
+
+    result = st.session_state.get(state_key)
+    if not result:
+        return
+    suggestions = result.get("keywords") or []
+    if not suggestions:
+        st.info(result.get("message") or "No new keywords to suggest.")
+        return
+
+    st.caption(f"Based on {result.get('based_on', 0)} misrouted queries.")
+    chosen = st.multiselect(
+        "Suggested keywords",
+        options=suggestions,
+        default=suggestions,
+        key=f"kw_pick_{space_id}",
+    )
+    if st.button("Add selected keywords", key=f"kw_add_btn_{space_id}") and chosen:
+        merged = normalize_keywords(space_keywords(space) + chosen)
+        try:
+            client.put(f"/spaces/{space_id}", json={"keywords": merged})
+        except ApiError as exc:
+            st.error(f"Could not add keywords: {exc.message}")
+            return
+        st.session_state.pop(state_key, None)
+        st.success(f"Added {len(chosen)} keyword(s). Reload to see them in the form.")
 
 
 def _render_delete_control(client: ApiClient, space: dict[str, Any]) -> None:

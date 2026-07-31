@@ -76,6 +76,8 @@ TOP_N = 10
 QUERIES_PATH = "/queries"
 TOP_DOCUMENTS_PATH = "/analytics/top-documents"
 TOP_SPACES_PATH = "/analytics/top-spaces"
+GAPS_PATH = "/analytics/gaps"
+FEEDBACK_PATH = "/analytics/feedback"
 ACCURACY_PATH = "/analytics/accuracy"
 EXPORT_PATH = "/analytics/export"
 SPACES_PATH = "/spaces"
@@ -728,6 +730,60 @@ def _render_usage_metrics(
                 st.info("No queries recorded for this range.")
 
 
+def _render_knowledge_gaps(
+    client: ApiClient, start_iso: str, end_iso: str
+) -> None:
+    """Render the top unanswered questions so gaps drive the next uploads."""
+    import streamlit as st
+
+    section_header("Knowledge Gaps — Top Unanswered Questions", module="analytics")
+    st.caption(
+        "Questions the knowledge base could not answer (no-match). "
+        "Upload documents covering these topics to close the gaps."
+    )
+    params = build_range_params(start=start_iso, end=end_iso, n=TOP_N)
+    data, error = _fetch(client, GAPS_PATH, params=params)
+    if error is not None:
+        st.error(f"Knowledge gaps unavailable: {error}")
+        return
+    if not data:
+        st.success("No unanswered questions in this range — no gaps detected.")
+        return
+    st.dataframe(
+        [
+            {
+                "Question": row.get("query_text", ""),
+                "Routed Space": row.get("space_name", ""),
+                "Times Asked": row.get("count", 0),
+                "Last Asked": row.get("last_ts", ""),
+            }
+            for row in data
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _render_feedback_summary(client: ApiClient) -> None:
+    """Render the End_User 👍/👎 satisfaction card."""
+    data, error = _fetch(client, FEEDBACK_PATH)
+    if error is not None:
+        render_metric_card(
+            "User Satisfaction", "—", module="analytics", help_text=str(error)
+        )
+        return
+    up = (data or {}).get("up", 0)
+    down = (data or {}).get("down", 0)
+    pct = (data or {}).get("satisfaction_pct")
+    value = "N/A" if pct is None else f"{int(pct)}%"
+    render_metric_card(
+        "User Satisfaction",
+        value,
+        module="analytics",
+        help_text=f"👍 {up} · 👎 {down} (from bot answer feedback buttons)",
+    )
+
+
 def _render_accuracy(client: ApiClient, space_names: dict[int, str]) -> None:
     """Render per-space classification accuracy (Req 10.3)."""
     import streamlit as st
@@ -830,11 +886,13 @@ def _main() -> None:
 
     _render_history(client, space_names, start_iso, end_iso, space_ids)
     _render_usage_metrics(client, start_iso, end_iso)
+    _render_knowledge_gaps(client, start_iso, end_iso)
 
     col_left, col_right = st.columns(2)
     with col_left:
         _render_accuracy(client, space_names)
     with col_right:
+        _render_feedback_summary(client)
         render_metric_card(
             "Intent Spaces",
             len(space_names),

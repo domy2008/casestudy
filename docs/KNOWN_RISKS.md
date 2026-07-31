@@ -86,3 +86,32 @@ the customer outweighs the exposure of non-sensitive metrics.
    exists.
 2. Scope the IAM statement to the `IntelliKnow` namespace via a condition key
    if tighter least-privilege is required.
+
+## 4. The 3-second latency target is an SLO, not a guarantee (accepted 2026-07-31)
+
+**Risk**: The project specification asks for query/response delivery within
+3 seconds. End-to-end latency is dominated by the AI generation call
+(Qwen-Max, up to a 10s timeout), which is outside the application's control,
+so individual answers can and do exceed 3 seconds (typical range 2–4s).
+Enforcing a hard 3s deadline would require cutting generation off
+mid-answer, converting a slightly slow success into a truncated or failed
+response.
+
+**Impact**:
+- Some queries exceed the 3s target; users wait a moment longer but still
+  receive a complete, cited answer.
+- Strict reading of the spec's "≤3s latency" is met as a monitored SLO
+  rather than a per-request bound.
+
+**Decision**: Accepted. Latency is measured per query (`latency_ms` in the
+Query_Log), published to CloudWatch, and alarmed on sustained p95 > 3,000 ms
+(`latency_alarm_ms` setting), which protects the user experience without
+degrading answer quality. The web Test Chat additionally streams tokens so
+first text appears in about a second.
+
+**Future mitigations (if requirements change)**:
+1. Stream responses on the IM frontends (Telegram edit-message loop) so
+   perceived latency drops below 3s even when total generation runs longer.
+2. Use a faster generation model for short/simple queries, keeping the
+   quality model for complex ones.
+3. Cache answers for repeated queries within an intent space.

@@ -12,8 +12,9 @@ IntelliKnow KMS addresses three enterprise pain points: fragmented information, 
 
 ### Multi-frontend IM integration
 - Ask questions from the tools your teams already use: **Telegram** (long-poll via outbound proxy), **Microsoft Teams** (Bot Framework webhook), and **WhatsApp** (Meta Cloud API).
+- Telegram answers **stream in live** (send-then-edit loop, first text in ~1s) and end with **👍/👎 feedback buttons** whose verdicts feed the Analytics satisfaction metric.
 - Answers are formatted natively per tool — Teams gets Markdown bullets, Telegram/WhatsApp get plain text with a `Sources:` footer — within each platform's message limits.
-- Credentials are configured in the admin console, validated, and stored **Fernet-encrypted**; each integration shows a live Connected/Error/Disconnected status, an end-to-end **Test** button, and its 50 most recent error-log entries.
+- Credentials are configured in the admin console, validated, and stored **Fernet-encrypted**; each integration shows a live Connected/Error/Disconnected status, an end-to-end **Test** button (connectivity check + a sample query through the real pipeline), and its 50 most recent error-log entries.
 
 ### Document-driven knowledge base
 - Upload **PDF, DOCX, XLSX, Markdown, or plain text** (up to 50 MB); documents move Pending → Processed automatically.
@@ -27,10 +28,10 @@ IntelliKnow KMS addresses three enterprise pain points: fragmented information, 
 
 ### Grounded, cited answers
 - RAG responses answer **only from retrieved passages** and cite the source document names; a clear "no match" message is returned when the knowledge base has nothing relevant.
-- Answers reply in the user's language (Chinese question → Chinese answer), typically within **2–4 seconds** (fast model for classification, quality model for generation).
+- Answers reply in the user's language (Chinese question → Chinese answer), with a **3-second latency SLO** — every query's latency is measured and a CloudWatch alarm fires on sustained p95 > 3s (fast model for classification, quality model for generation).
 - The web **Test Chat streams answers token by token**, so text starts appearing in about a second.
 
-### Admin console (six screens)
+### Admin console (six screens, mobile-responsive)
 - **Dashboard** — system summary cards: document counts by status, 24-hour query activity, integration health.
 - **Frontend Integration** — credential entry (masked on re-read), connectivity tests, error logs.
 - **KB Management** — upload zone, document table (name/date/format/status), search/filter, space assignment.
@@ -40,6 +41,8 @@ IntelliKnow KMS addresses three enterprise pain points: fragmented information, 
 
 ### Operations & security
 - Every query is logged (timestamp, intent, confidence, latency, response status, originating tool) and exportable as CSV.
+- **Knowledge gaps**: Analytics surfaces the top unanswered (no-match) questions so admins know exactly which documents to upload next, plus a user-satisfaction card from bot feedback.
+- **Self-improving routing**: one click proposes AI keyword suggestions from misclassified queries (Intent Configuration), and uploads get an AI-suggested Intent Space the admin can accept.
 - CloudWatch metrics, logs, and alarms for query latency p95, error rate, and backend health — embedded in the portal's Dashboard, no AWS account needed.
 - Secrets never appear in source, logs, or API responses (values are masked to the last ≤4 characters).
 
