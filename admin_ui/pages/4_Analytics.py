@@ -13,9 +13,10 @@ coverage. It renders (all against the shared backend admin REST API via
   Intent_Spaces for the selected range (Req 10.2).
 * **Per-space accuracy** — the classification accuracy rate per Intent_Space,
   ``N/A`` where a space has no Admin-verified queries (Req 10.3).
-* **Query verification** — the history table is row-selectable; selecting a
-  row reveals inline controls to confirm the detected Intent_Space with one
-  click or mark the correct one, feeding the accuracy computation (Req 10.3).
+* **Query verification** — the history table's *Verified* column is directly
+  editable: picking an Intent_Space in a row's dropdown records the Admin's
+  verdict immediately (pick the detected space to confirm it, or a different
+  one to correct it), feeding the accuracy computation (Req 10.3).
 * **CSV export** — a download button producing the filtered Query_Log plus
   metrics; an export failure surfaces an error message and changes nothing
   (Req 10.5, 10.8).
@@ -249,46 +250,87 @@ def history_row_to_display(
     """
     detected_id = entry.get("detected_space_id")
     intent = resolve_space_label(detected_id, space_names)
+    verified_id = entry.get("verified_space_id")
+    verified: str | None = None
+    if verified_id is not None:
+        verified = resolve_space_label(verified_id, space_names)
+    # Trim to whole seconds: stored timestamps may carry microseconds
+    # ("2026-07-31 03:44:52.398574"), which is noise in the history table.
+    ts = str(entry.get("ts", "") or "").replace("T", " ").split(".")[0]
     return {
-        "Time": str(entry.get("ts", "") or ""),
+        "Time": ts,
         "Query": str(entry.get("query_text", "") or ""),
         "Detected Intent": intent,
         "Confidence": format_confidence(entry.get("confidence")),
         "Status": str(entry.get("response_status", "") or ""),
-        "Verified": resolve_space_label(entry.get("verified_space_id"), space_names),
+        "Verified": verified,
     }
 
 
-def selected_row_index(event: Any) -> int | None:
-    """Extract the first selected row index from a dataframe selection event.
+def pending_verifications(
+    widget_state: Any,
+    snapshot_entries: list[dict[str, Any]],
+    name_to_id: dict[str, int],
+) -> list[tuple[int, int]]:
+    """Extract the verifications implied by a data editor's edit state.
 
-    ``st.dataframe(on_select="rerun")`` returns a selection-state object whose
-    ``selection.rows`` holds the selected row indices. This tolerates both
-    attribute-style and mapping-style access (and any malformed shape) so the
-    caller can treat "no usable selection" uniformly as ``None``.
+    ``st.data_editor`` keeps its uncommitted cell edits in session state as
+    ``{"edited_rows": {<row_index>: {<column>: <value>}}}``. This maps each
+    edited *Verified* cell back to the Query_Log entry that was **on screen
+    when the Admin edited it** (``snapshot_entries``, the exact rows the
+    editor was rendered from) — not a re-fetched row set, which may have
+    shifted if new queries arrived meanwhile.
+
+    Rows with an unknown index, no query id, an empty/cleared cell, an
+    unknown space name, or an unchanged verdict are skipped, so re-runs never
+    produce duplicate submissions.
 
     Args:
-        event: The value returned by a selectable ``st.dataframe`` call.
+        widget_state: The editor's session-state value (mapping-like or
+            ``None``).
+        snapshot_entries: The raw Query_Log entries the editor rendered, in
+            row order.
+        name_to_id: Mapping of Intent_Space display name → space id.
 
     Returns:
-        The first selected row index, or ``None`` when nothing is selected.
+        A list of ``(query_id, verified_space_id)`` pairs to submit.
     """
-    if event is None:
-        return None
-    selection = getattr(event, "selection", None)
-    if selection is None and isinstance(event, dict):
-        selection = event.get("selection")
-    if selection is None:
-        return None
-    rows = getattr(selection, "rows", None)
-    if rows is None and isinstance(selection, dict):
-        rows = selection.get("rows")
-    if not rows:
-        return None
-    try:
-        return int(rows[0])
-    except (TypeError, ValueError):
-        return None
+    if widget_state is None:
+        return []
+    edited = (
+        widget_state.get("edited_rows")
+        if hasattr(widget_state, "get")
+        else getattr(widget_state, "edited_rows", None)
+    )
+    if not isinstance(edited, dict):
+        return []
+
+    changes: list[tuple[int, int]] = []
+    for raw_index, cells in edited.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(cells, dict) or not (0 <= index < len(snapshot_entries)):
+            continue
+        chosen = cells.get("Verified")
+        if not chosen:
+            continue
+        new_id = name_to_id.get(str(chosen))
+        if new_id is None:
+            continue
+        entry = snapshot_entries[index]
+        query_id = entry.get("id")
+        if query_id is None:
+            continue
+        stored = entry.get("verified_space_id")
+        try:
+            unchanged = stored is not None and int(stored) == int(new_id)
+        except (TypeError, ValueError):
+            unchanged = False
+        if not unchanged:
+            changes.append((int(query_id), int(new_id)))
+    return sorted(changes)
 
 
 def resolve_space_label(space_id: Any, space_names: dict[int, str]) -> str:
@@ -549,6 +591,18 @@ def _render_history(
     import streamlit as st
 
     section_header("Query History", module="analytics")
+
+    # Submit any Verified-cell edits made on the PREVIOUS render before
+    # fetching, so the refreshed table (and the accuracy section rendered
+    # later in this same run) already reflect the new verdicts. The edits are
+    # read from the editor's widget state and resolved against a session
+    # snapshot of the rows the Admin was actually looking at, so new queries
+    # arriving between reruns can never misalign a verdict onto a different
+    # query.
+    editor_key = "analytics_history_editor"
+    snapshot_key = "analytics_history_snapshot"
+    _submit_verifications(st, client, editor_key, snapshot_key, space_names)
+
     params = build_history_params(
         start=start_iso, end=end_iso, space_ids=space_ids, limit=HISTORY_LIMIT
     )
@@ -565,103 +619,70 @@ def _render_history(
     rows = [history_row_to_display(entry, space_names) for entry in entries]
     st.caption(
         f"Showing {len(rows)} most recent entries (newest first). "
-        "Select a row to verify its classification."
+        "To verify a classification, pick the correct space in the row's "
+        "**Verified** cell — choose the detected space to confirm it."
     )
-    event = st.dataframe(
+    space_options = sorted(space_names.values(), key=str.lower)
+    st.session_state[snapshot_key] = entries
+    st.data_editor(
         rows,
         use_container_width=True,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="analytics_history_table",
+        disabled=["Time", "Query", "Detected Intent", "Confidence", "Status"],
+        column_config={
+            "Verified": st.column_config.SelectboxColumn(
+                "Verified",
+                options=space_options,
+                required=False,
+                help="The Admin-verified correct Intent_Space for this query. "
+                "Editing this cell saves immediately.",
+            )
+        },
+        key=editor_key,
     )
-    index = selected_row_index(event)
-    if index is not None and 0 <= index < len(entries):
-        _render_row_verification(st, client, entries[index], space_names)
 
 
-def _render_row_verification(
+def _submit_verifications(
     st: Any,
     client: ApiClient,
-    entry: dict[str, Any],
+    editor_key: str,
+    snapshot_key: str,
     space_names: dict[int, str],
 ) -> None:
-    """Render inline verification controls for the selected history row.
+    """Persist Verified-cell edits via ``POST /queries/{id}/verify``.
 
-    One click on "Detected is correct" verifies the query as its detected
-    Intent_Space (the common case); otherwise the Admin picks the correct
-    space and marks it. Both paths call ``POST /queries/{id}/verify`` and
-    rerun so the table's Verified column and the accuracy metrics refresh
-    immediately (Req 10.3).
+    Reads the editor's pending cell edits from session state, resolves them
+    against the snapshot of entries the editor rendered, submits each changed
+    verdict individually (a failure is surfaced but does not block the rest),
+    and clears the editor state so the refreshed table shows the stored
+    verdicts (Req 10.3).
     """
-    query_id = entry.get("id")
-    if query_id is None:
-        st.warning("This entry has no id, so it cannot be verified.")
-        return
-    if not space_names:
-        st.info("Configure Intent_Spaces first to verify classifications.")
+    widget_state = st.session_state.get(editor_key)
+    snapshot = st.session_state.get(snapshot_key) or []
+    name_to_id = {name: sid for sid, name in space_names.items()}
+    changes = pending_verifications(widget_state, snapshot, name_to_id)
+    if not changes:
         return
 
-    detected_id = entry.get("detected_space_id")
-    detected_label = resolve_space_label(detected_id, space_names)
-    verified_label = resolve_space_label(entry.get("verified_space_id"), space_names)
-
-    with st.container(border=True):
-        st.markdown(
-            f"**Verify query #{int(query_id)}** — “{entry.get('query_text', '')}”"
+    saved = 0
+    for query_id, space_id in changes:
+        try:
+            client.post(
+                verify_path(query_id), json={"verified_space_id": space_id}
+            )
+            saved += 1
+        except ApiError as exc:
+            st.error(
+                f"Could not verify query {query_id}: "
+                f"{'query not found or endpoint absent.' if exc.status_code == 404 else exc.message}"
+            )
+    # Drop the editor's edit overlay so the re-rendered table reflects the
+    # stored verdicts rather than replaying stale cell edits.
+    del st.session_state[editor_key]
+    if saved:
+        st.toast(
+            f"Saved {saved} verification{'s' if saved > 1 else ''}.", icon="✅"
         )
-        st.caption(
-            f"Detected: {detected_label} · "
-            f"Confidence: {format_confidence(entry.get('confidence'))} · "
-            f"Currently verified as: {verified_label}"
-        )
-
-        col_confirm, col_space, col_mark = st.columns([1, 1, 1])
-        with col_confirm:
-            confirm = st.button(
-                f"✓ Detected is correct ({detected_label})",
-                key=f"analytics_confirm_{query_id}",
-                disabled=detected_id is None,
-                help="One click: verify this query as its detected space."
-                if detected_id is not None
-                else "No space was detected for this query — pick one instead.",
-            )
-        space_options = sorted(space_names, key=lambda sid: space_names[sid].lower())
-        with col_space:
-            chosen = st.selectbox(
-                "Correct space",
-                options=space_options,
-                format_func=lambda sid: space_names.get(sid, f"#{sid}"),
-                key=f"analytics_correct_space_{query_id}",
-                label_visibility="collapsed",
-            )
-        with col_mark:
-            mark = st.button(
-                "Mark as this space", key=f"analytics_mark_{query_id}"
-            )
-
-    target: int | None = None
-    if confirm and detected_id is not None:
-        target = int(detected_id)
-    elif mark:
-        target = int(chosen)
-    if target is None:
-        return
-
-    try:
-        client.post(verify_path(int(query_id)), json={"verified_space_id": target})
-    except ApiError as exc:
-        if exc.status_code == 404:
-            st.error("Verification failed: query not found or endpoint absent.")
-        else:
-            st.error(f"Could not record verification: {exc.message}")
-        return
-    st.toast(
-        f"Query {int(query_id)} verified as "
-        f"{space_names.get(target, target)}.",
-        icon="✅",
-    )
-    st.rerun()
 
 
 def _render_usage_metrics(

@@ -45,6 +45,7 @@ __all__ = [
     "SCREENS",
     "ApiClient",
     "ApiError",
+    "LOGOUT_PATH",
     "Screen",
     "accent_color",
     "api_base_url",
@@ -325,23 +326,34 @@ SCREENS: tuple[Screen, ...] = (
 )
 
 
-def render_sidebar_nav(active_key: str) -> None:
-    """Render the five-screen navigation list in the sidebar (Req 9.1, 9.2).
+#: Path of the reverse proxy's logout endpoint. Visiting it returns 401 for
+#: the basic-auth realm, which makes the browser drop its cached credentials.
+LOGOUT_PATH: str = "/logout"
 
-    Streamlit's built-in multipage navigation already links the pages; this
-    helper adds a titled, accent-aware list that highlights the active screen
-    so the Admin always sees where they are. The screen whose ``key`` matches
-    ``active_key`` is drawn as a filled accent chip; the others render muted.
+
+def render_sidebar_nav(active_key: str) -> None:
+    """Render the sidebar extras beneath the native page navigation.
+
+    Streamlit's built-in multipage navigation (auto-generated from the files
+    in ``pages/``) is the single functional menu — an earlier custom
+    per-screen list produced a duplicate menu, so no page list is rendered
+    here. The only addition is a **Logout** link targeting the reverse
+    proxy's :data:`LOGOUT_PATH`, which invalidates the browser's cached
+    basic-auth credentials so the next visit prompts for login again.
 
     Args:
-        active_key: The :attr:`Screen.key` of the currently displayed screen.
+        active_key: The :attr:`Screen.key` of the currently displayed screen
+            (unused; kept for the pages' existing call signature).
     """
-    # Streamlit's built-in multipage navigation (auto-generated from the files
-    # in ``pages/``) is the single functional menu. We intentionally render
-    # nothing extra here: an earlier custom per-screen list produced a
-    # duplicate menu, and a later branding header was mistaken for a dead
-    # menu item, so the sidebar now carries only the native page links.
-    del active_key  # Unused; kept for the pages' existing call signature.
+    del active_key
+    import streamlit as st
+
+    st.sidebar.markdown(
+        f'<div style="margin-top:8px"><a href="{LOGOUT_PATH}" target="_self" '
+        f'style="color:{NEUTRAL["muted"]};text-decoration:none;'
+        f'font-size:0.9rem">🚪 Logout</a></div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------
