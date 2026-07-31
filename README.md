@@ -52,7 +52,7 @@ How to run IntelliKnow KMS day to day, from first login to a working IM bot.
 ### 2.1 Open the admin console
 
 1. Open **https://kms.autobuy.top** in a browser (HTTPS, works on desktop and mobile).
-2. No username/password is required in the current demo deployment — access control is expected to be enforced at the network layer. For production, restrict access to admin IPs in the security group, or enable HTTP basic auth in nginx.
+2. Sign in at the browser's login dialog (HTTP basic auth, realm "IntelliKnow Admin") with the admin credentials provided by your operator. The Teams/WhatsApp webhook endpoints and `/health` remain open, as the platforms cannot authenticate.
 3. Use the left sidebar to switch between the six screens; the Dashboard loads first.
 
 ### 2.2 Configure the AI credential (once)
