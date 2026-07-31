@@ -335,8 +335,10 @@ def _render_status_and_test(st: Any, client: ApiClient, tool: str) -> None:
         "Connection status", label, module=MODULE, help_text=detail
     )
 
-    if st.button("Test connection", key=_session_key(tool, "test_btn")):
-        with st.spinner(f"Running connectivity check for {tool}…"):
+    if st.button("Test integration", key=_session_key(tool, "test_btn")):
+        with st.spinner(
+            f"Testing {tool}: connectivity check + sample query…"
+        ):
             try:
                 result = client.post(f"/integrations/{tool}/test")
             except ApiError as exc:
@@ -345,20 +347,20 @@ def _render_status_and_test(st: Any, client: ApiClient, tool: str) -> None:
                     "timed_out": False,
                     "detail": exc.message,
                 }
-                st.error(f"Connectivity check failed: {exc.message}")
+                st.error(f"Integration test failed: {exc.message}")
             else:
                 st.session_state[result_key] = result
                 if result.get("ok"):
                     st.success(
-                        result.get("detail") or "Connectivity check succeeded."
+                        result.get("detail") or "Integration test succeeded."
                     )
                 elif result.get("timed_out"):
                     st.warning(
-                        result.get("detail") or "Connectivity check timed out."
+                        result.get("detail") or "Integration test timed out."
                     )
                 else:
                     st.error(
-                        result.get("detail") or "Connectivity check failed."
+                        result.get("detail") or "Integration test failed."
                     )
 
 

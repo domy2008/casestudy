@@ -39,6 +39,8 @@ __all__ = [
     "IntentSpaceSpec",
     "Message",
     "build_classification_messages",
+    "build_document_space_messages",
+    "build_keyword_suggestion_messages",
     "build_structuring_messages",
     "build_rag_messages",
     "classification_prompt_text",
@@ -334,6 +336,106 @@ def build_structuring_messages(content: ExtractedContent) -> list[Message]:
     return [
         {"role": "system", "content": _STRUCTURING_SYSTEM},
         {"role": "user", "content": "\n".join(parts)},
+    ]
+
+
+def build_document_space_messages(
+    spaces: Iterable[IntentSpaceSpec | Sequence],
+    document_name: str,
+    excerpt: str,
+    *,
+    general_space_name: str = "General",
+) -> list[Message]:
+    """Build the prompt suggesting which Intent_Space a document belongs to.
+
+    Reuses the classification framing and its strict JSON contract
+    (``{"space_id": ..., "space_name": ..., "confidence": ...}``) so callers
+    can parse the response with the same logic as query classification, but
+    frames the task as categorizing an uploaded document from its name and an
+    excerpt of its content.
+
+    Args:
+        spaces: The Intent_Spaces to choose among (same forms as
+            :func:`build_classification_messages`).
+        document_name: The uploaded file's name (often a strong signal).
+        excerpt: The first portion of the document's extracted text.
+        general_space_name: Name of the fallback General space.
+
+    Returns:
+        An OpenAI-style message list for ``chat_completion`` with JSON mode.
+    """
+    normalized = [_coerce_space(space) for space in spaces]
+    space_blocks = "\n".join(_format_space_block(s) for s in normalized)
+
+    user_content = (
+        "Available Intent_Spaces (choose exactly one):\n"
+        f"{space_blocks}\n\n"
+        f'If nothing fits well, choose the "{general_space_name}" space with a '
+        "low confidence score.\n\n"
+        "Decide which Intent_Space the following uploaded document belongs "
+        f"to.\nDocument name: {document_name}\nDocument excerpt:\n"
+        f'"""\n{excerpt}\n"""\n\n'
+        'Return ONLY the JSON object: {"space_id": <integer>, '
+        '"space_name": <string>, "confidence": <number 0-100>}.'
+    )
+
+    return [
+        {"role": "system", "content": _CLASSIFICATION_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+
+
+_KEYWORD_SUGGESTION_SYSTEM = (
+    "You are helping an admin improve the keyword list of a knowledge-base "
+    "intent space. Keywords are short terms (1-3 words, in the language of "
+    "the queries) used to route user questions to the right space.\n\n"
+    "You will see the space's name, description, current keywords, and real "
+    "user queries that BELONG to this space but were misrouted elsewhere. "
+    "Propose NEW keywords that would help route such queries correctly.\n\n"
+    "Rules: do not repeat existing keywords; prefer terms actually appearing "
+    "in the misrouted queries; at most 10 suggestions; each 1-50 characters. "
+    'Return ONLY a JSON object: {"keywords": ["<kw1>", "<kw2>", ...]}.'
+)
+
+
+def build_keyword_suggestion_messages(
+    space_name: str,
+    description: str,
+    existing_keywords: Sequence[str],
+    misrouted_queries: Sequence[str],
+) -> list[Message]:
+    """Build the prompt asking for new routing keywords for a space.
+
+    Feeds the model the space's identity, its current keywords, and real
+    misclassified queries (queries an Admin verified as belonging to this
+    space but that were detected into another one), and asks for new keyword
+    suggestions as strict JSON.
+
+    Args:
+        space_name: The Intent_Space name.
+        description: The space's description (may be empty).
+        existing_keywords: Keywords already configured (never re-suggested).
+        misrouted_queries: Verified-but-misrouted query texts for this space.
+
+    Returns:
+        An OpenAI-style message list for ``chat_completion`` with JSON mode.
+    """
+    existing = ", ".join(existing_keywords) if existing_keywords else "(none)"
+    queries = "\n".join(f"- {q}" for q in misrouted_queries)
+
+    user_content = (
+        f"Intent space: {space_name}\n"
+        f"Description: {description or '(none)'}\n"
+        f"Current keywords: {existing}\n\n"
+        "User queries verified to belong to this space but misrouted "
+        "elsewhere:\n"
+        f"{queries}\n\n"
+        'Return ONLY the JSON object: {"keywords": [...]}.'
+    )
+
+    return [
+        {"role": "system", "content": _KEYWORD_SUGGESTION_SYSTEM},
+        {"role": "user", "content": user_content},
     ]
 
 

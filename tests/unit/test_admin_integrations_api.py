@@ -326,6 +326,55 @@ def test_test_endpoint_unknown_tool(store, temp_conn):
     assert resp.status_code == 404
 
 
+class _FakeOrchestrator:
+    """Orchestrator fake answering the sample test query with a preset status."""
+
+    def __init__(self, status: str = "success") -> None:
+        self._status = status
+        self.contexts: list = []
+
+    async def handle_query(self, ctx):
+        from app.core.models import GeneratedResponse
+
+        self.contexts.append(ctx)
+        return GeneratedResponse(text="answer", citations=[], status=self._status)
+
+
+def test_test_endpoint_runs_sample_query(store, temp_conn):
+    """A successful check also sends a sample query through the pipeline."""
+    checker = FakeConnectivityChecker(
+        ConnectivityResult(tool="telegram", ok=True, detail="getMe ok")
+    )
+    app = _make_app(store=store, conn=temp_conn, checker=checker)
+    orchestrator = _FakeOrchestrator(status="success")
+    app.state.orchestrator = orchestrator
+
+    body = TestClient(app).post("/integrations/telegram/test").json()
+
+    assert body["ok"] is True
+    assert "Sample query answered" in body["detail"]
+    # The sample query went through the pipeline, labeled as test traffic.
+    assert orchestrator.contexts[0].tool == "telegram-test"
+    assert orchestrator.contexts[0].text == admin.SAMPLE_TEST_QUERY
+
+
+def test_test_endpoint_sample_query_failure_fails_test(store, temp_conn):
+    """A failed sample query fails the test and is recorded (Req 3.3)."""
+    checker = FakeConnectivityChecker(
+        ConnectivityResult(tool="telegram", ok=True, detail="getMe ok")
+    )
+    app = _make_app(store=store, conn=temp_conn, checker=checker)
+    app.state.orchestrator = _FakeOrchestrator(status="failed")
+
+    body = TestClient(app).post("/integrations/telegram/test").json()
+
+    assert body["ok"] is False
+    assert "Sample query failed" in body["detail"]
+    assert IntegrationRepository(temp_conn).get("telegram")["status"] == "Error"
+    errors = IntegrationErrorLogRepository(temp_conn).list_recent(tool="telegram")
+    assert len(errors) == 1
+
+
 # ---------------------------------------------------------------------------
 # Error listing
 # ---------------------------------------------------------------------------

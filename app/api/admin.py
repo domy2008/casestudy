@@ -39,7 +39,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import json
+import logging
 import sqlite3
+import time
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
@@ -51,12 +55,15 @@ from fastapi import (
     HTTPException,
     Path,
     Query,
+    Request,
     Response,
 )
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
 from app.core.models import ConnectivityResult
+
+logger = logging.getLogger(__name__)
 from app.security.credentials import (
     CREDENTIAL_SCHEMAS,
     CredentialStore,
@@ -562,12 +569,57 @@ def save_credentials(
     )
 
 
+#: Canned query pushed through the real pipeline by the integration test
+#: endpoint, so the Admin test button verifies the full query flow (classify →
+#: retrieve → generate), not just tool-API reachability.
+SAMPLE_TEST_QUERY = "Integration test: what topics does the knowledge base cover?"
+
+#: Tool label recorded in the Query_Log for sample test queries, keeping them
+#: distinguishable from real End_User traffic in analytics.
+SAMPLE_TEST_TOOL_SUFFIX = "-test"
+
+
+async def _run_sample_query(request: Request, tool: str) -> str:
+    """Send :data:`SAMPLE_TEST_QUERY` through the shared query pipeline.
+
+    Args:
+        request: The current request, source of ``app.state.orchestrator``.
+        tool: The Frontend_Tool under test; logged as ``{tool}-test``.
+
+    Returns:
+        A one-line human-readable outcome to append to the test detail.
+
+    Raises:
+        RuntimeError: If the pipeline answers with status ``"failed"``.
+    """
+    from app.core.models import QueryContext
+
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is None:
+        return "Sample query skipped: query pipeline not started."
+
+    ctx = QueryContext(
+        query_id=str(uuid.uuid4()),
+        tool=f"{tool}{SAMPLE_TEST_TOOL_SUFFIX}",
+        conversation_ref={"channel": "integration_test"},
+        text=SAMPLE_TEST_QUERY,
+        received_at=datetime.now(),
+    )
+    started = time.monotonic()
+    response = await orchestrator.handle_query(ctx)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if response.status == "failed":
+        raise RuntimeError(f"Sample query failed after {elapsed_ms} ms.")
+    return f"Sample query answered in {elapsed_ms} ms (status: {response.status})."
+
+
 @integrations_router.post(
     "/{tool}/test",
     response_model=ConnectivityResultResponse,
-    summary="Run an end-to-end connectivity check (30s cap)",
+    summary="Run an end-to-end test: connectivity check + sample query (30s cap)",
 )
 async def test_integration(
+    request: Request,
     tool: str = Path(..., description="Frontend_Tool key (telegram/teams)."),
     checker: ConnectivityChecker = Depends(get_connectivity_checker),
     integration_repo=Depends(get_integration_repo),
@@ -578,10 +630,12 @@ async def test_integration(
     The check runs the injected connectivity checker under an
     :func:`asyncio.wait_for` deadline. If it does not finish within
     :data:`TEST_TIMEOUT_SECONDS`, it is terminated and a timeout failure is
-    reported (Req 3.5). Either way the tool's stored status is updated
-    (Connected on success, Error otherwise) and any failure is written to the
-    integration error log (Req 3.3); the result is returned for display
-    (Req 3.2).
+    reported (Req 3.5). On a successful check, a sample query is additionally
+    sent through the shared query pipeline so the test verifies the full
+    end-to-end flow, and its outcome is appended to the result detail. Either
+    way the tool's stored status is updated (Connected on success, Error
+    otherwise) and any failure is written to the integration error log
+    (Req 3.3); the result is returned for display (Req 3.2).
     """
     _require_frontend_tool(tool)
 
@@ -603,6 +657,23 @@ async def test_integration(
 
     if result.checked_at is None:
         result.checked_at = datetime.now()
+
+    # On a reachable tool, additionally verify the query pipeline end to end
+    # with a sample query (kept under the same overall deadline).
+    if result.ok:
+        try:
+            sample_detail = await asyncio.wait_for(
+                _run_sample_query(request, tool), timeout=TEST_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            result.ok = False
+            sample_detail = (
+                f"Sample query timed out after {int(TEST_TIMEOUT_SECONDS)} seconds."
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced via the result detail
+            result.ok = False
+            sample_detail = str(exc)
+        result.detail = f"{result.detail} {sample_detail}".strip()
 
     # Reflect the outcome in the stored status and error log. Guard so a
     # bookkeeping failure never masks the actual test result.
@@ -924,6 +995,98 @@ def create_document(
     return created
 
 
+class SuggestSpaceRequest(BaseModel):
+    """Body for ``POST /documents/suggest-space`` (pre-upload suggestion)."""
+
+    name: str = Field(..., description="File name; its extension picks the loader.")
+    content_b64: str = Field(..., description="Base64-encoded file bytes.")
+
+
+#: How much extracted text is fed to the space-suggestion prompt.
+SPACE_SUGGESTION_EXCERPT_CHARS = 1500
+
+
+@documents_router.post(
+    "/suggest-space", summary="AI-suggest the Intent_Space for a document"
+)
+async def suggest_document_space(
+    request: Request,
+    payload: SuggestSpaceRequest,
+    space_repo=Depends(get_intent_space_repo),
+) -> dict[str, Any]:
+    """Suggest which Intent_Space an about-to-be-uploaded document belongs to.
+
+    Decodes the file, extracts its text deterministically with the matching
+    format loader, and asks the classifier which space fits best, so the KB
+    upload form can pre-select the space (the Admin always confirms). On an
+    unsupported/corrupt file a 400 names the problem; on an AI failure the
+    suggestion is ``null`` so the caller simply keeps the manual default.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from app.kb.loaders import LoaderError, load_document
+
+    try:
+        content = base64.b64decode(payload.content_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="content_b64 is not valid base64.")
+
+    suffix = _Path(payload.name).suffix or ".txt"
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = _Path(tmp.name)
+        try:
+            extracted = load_document(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except LoaderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Body text first; fall back to flattened table cells for sheet-like files.
+    excerpt = (extracted.text or "").strip()
+    if not excerpt and extracted.tables:
+        excerpt = " ".join(
+            cell for table in extracted.tables for row in table for cell in row
+        )
+    excerpt = excerpt[:SPACE_SUGGESTION_EXCERPT_CHARS]
+
+    ai_client = getattr(request.app.state, "dashscope_client", None)
+    if ai_client is None or not excerpt:
+        return {"suggestion": None}
+
+    from app.ai.prompts import build_document_space_messages
+    from app.core.orchestrator import Orchestrator
+
+    spaces = space_repo.list()
+    space_specs = [
+        (s["id"], s["name"], s.get("description", ""), space_repo.get_keywords(s["id"]))
+        for s in spaces
+    ]
+    valid_ids = {int(s["id"]) for s in spaces}
+    messages = build_document_space_messages(space_specs, payload.name, excerpt)
+    try:
+        raw = await ai_client.classify(messages)
+        parsed = Orchestrator._parse_classification(raw, valid_ids)
+    except Exception:  # noqa: BLE001 - AI failure → no suggestion, not a 500
+        logger.warning("space suggestion AI call failed for %s", payload.name)
+        parsed = None
+
+    if parsed is None or parsed[0] is None:
+        return {"suggestion": None}
+
+    space_id, confidence = parsed
+    space = space_repo.get(space_id)
+    return {
+        "suggestion": {
+            "space_id": space_id,
+            "space_name": space["name"] if space else f"#{space_id}",
+            "confidence": confidence,
+        }
+    }
+
+
 @documents_router.get("", summary="List documents with optional filters")
 @documents_router.get("/", include_in_schema=False)
 def list_documents(
@@ -1218,6 +1381,92 @@ def delete_space(
     }
 
 
+#: Maximum keyword suggestions returned per request.
+KEYWORD_SUGGESTION_MAX = 10
+
+#: How many recent misrouted queries feed one suggestion request.
+KEYWORD_SUGGESTION_QUERY_LIMIT = 50
+
+
+@spaces_router.post(
+    "/{space_id}/suggest-keywords",
+    summary="AI keyword suggestions from misclassified queries",
+)
+async def suggest_space_keywords(
+    request: Request,
+    space_id: int,
+    conn: sqlite3.Connection = Depends(get_connection),
+    space_repo=Depends(get_intent_space_repo),
+) -> dict[str, Any]:
+    """Suggest new routing keywords for a space from its misrouted queries.
+
+    Collects recent queries an Admin verified as belonging to this space but
+    that were detected into a different one, and asks the AI model to propose
+    new keywords (existing keywords are never re-suggested). Returns an empty
+    suggestion list with an explanatory message when there are no misrouted
+    queries yet or when the AI call fails.
+    """
+    space = space_repo.get(space_id)
+    if space is None:
+        raise HTTPException(status_code=404, detail=f"Space {space_id} not found.")
+
+    rows = conn.execute(
+        "SELECT DISTINCT query_text FROM query_log "
+        "WHERE verified_space_id = ? AND detected_space_id != ? "
+        "ORDER BY ts DESC LIMIT ?",
+        (space_id, space_id, KEYWORD_SUGGESTION_QUERY_LIMIT),
+    ).fetchall()
+    misrouted = [r["query_text"] for r in rows]
+    if not misrouted:
+        return {
+            "keywords": [],
+            "based_on": 0,
+            "message": (
+                "No misrouted queries verified for this space yet. Verify "
+                "misclassified queries in Analytics first."
+            ),
+        }
+
+    ai_client = getattr(request.app.state, "dashscope_client", None)
+    if ai_client is None:
+        raise HTTPException(status_code=503, detail="AI client is not available yet.")
+
+    from app.ai.prompts import build_keyword_suggestion_messages
+
+    existing = space_repo.get_keywords(space_id)
+    messages = build_keyword_suggestion_messages(
+        space["name"], space.get("description", ""), existing, misrouted
+    )
+    try:
+        raw = await ai_client.chat_completion(messages, json_mode=True)
+        parsed = json.loads(raw)
+        candidates = parsed.get("keywords", [])
+    except Exception:  # noqa: BLE001 - AI failure → empty suggestion, not a 500
+        logger.warning("keyword suggestion AI call failed for space %s", space_id)
+        return {
+            "keywords": [],
+            "based_on": len(misrouted),
+            "message": "Suggestion generation failed; please try again.",
+        }
+
+    existing_lower = {k.lower() for k in existing}
+    suggestions: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        keyword = candidate.strip()
+        if (
+            SPACE_KEYWORD_MIN <= len(keyword) <= SPACE_KEYWORD_MAX
+            and keyword.lower() not in existing_lower
+            and keyword.lower() not in {s.lower() for s in suggestions}
+        ):
+            suggestions.append(keyword)
+        if len(suggestions) >= KEYWORD_SUGGESTION_MAX:
+            break
+
+    return {"keywords": suggestions, "based_on": len(misrouted), "message": None}
+
+
 # ---------------------------------------------------------------------------
 # Settings / analytics / dashboard sub-router (Task 13.7)
 # ---------------------------------------------------------------------------
@@ -1404,6 +1653,33 @@ def _dashboard_queries_24h(conn: sqlite3.Connection) -> dict[str, int]:
         "success": int(row["success"] or 0),
         "failed": int(row["failed"] or 0),
     }
+
+
+@system_router.get("/analytics/gaps", summary="Top unanswered questions (knowledge gaps)")
+def analytics_gaps(
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    n: int = Query(10, ge=1, le=100),
+    analytics=Depends(get_analytics_service),
+) -> list[dict[str, Any]]:
+    """Return the most frequent unanswered (no-match) questions.
+
+    Surfaces the queries the knowledge base could not answer so the Admin
+    knows which documents to upload next. See
+    :meth:`~app.analytics.service.AnalyticsService.knowledge_gaps`.
+    """
+    return analytics.knowledge_gaps(start, end, n)
+
+
+@system_router.get("/analytics/feedback", summary="End-user feedback summary")
+def analytics_feedback(
+    analytics=Depends(get_analytics_service),
+) -> dict[str, Any]:
+    """Return 👍/👎 counts and the overall satisfaction percentage.
+
+    ``satisfaction_pct`` is ``null`` (N/A) when no feedback has been recorded.
+    """
+    return analytics.feedback_summary()
 
 
 @system_router.get("/dashboard/summary", summary="Dashboard summary (partial-failure tolerant)")
