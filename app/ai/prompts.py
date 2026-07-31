@@ -29,6 +29,7 @@ so the set of Intent_Spaces and each space's keywords are injected dynamically
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
@@ -41,6 +42,7 @@ __all__ = [
     "build_structuring_messages",
     "build_rag_messages",
     "classification_prompt_text",
+    "rewrite_passage_references",
     "NO_MATCH_MESSAGE",
 ]
 
@@ -349,7 +351,11 @@ _RAG_SYSTEM = (
     "Chinese for a Chinese question, in English for an English question, "
     "even when the passages are written in a different language.\n"
     "5. Ground every claim in the passages. Do not fabricate facts, numbers, "
-    "names, or citations."
+    "names, or citations.\n"
+    "6. When citing sources, refer to them by their source document name "
+    "(e.g. \u201caccording to hr_employee_handbook.docx\u201d). NEVER mention "
+    "passage numbers such as \u201c[Passage 1]\u201d \u2014 the reader cannot "
+    "see the numbered passages, only the final answer."
 )
 
 
@@ -400,10 +406,44 @@ def build_rag_messages(query: str, passages: Sequence[Passage]) -> list[Message]
         "Answer the question using ONLY the passages above. If the passages "
         "do not contain the answer, say that you could not find the "
         "information in the knowledge base. Keep the answer concise and cite "
-        "the source document name(s) you used."
+        "the source document name(s) you used. Never reference passages by "
+        "number (e.g. \u201c[Passage 1]\u201d); the reader cannot see them."
     )
 
     return [
         {"role": "system", "content": _RAG_SYSTEM},
         {"role": "user", "content": user_content},
     ]
+
+
+#: Matches passage-number references the model may echo from the prompt's
+#: internal ``[Passage N]`` labels, e.g. ``[Passage 1]`` or ``[passage 12]``.
+_PASSAGE_REF_PATTERN = re.compile(r"\[\s*Passage\s+(\d+)\s*\]", re.IGNORECASE)
+
+
+def rewrite_passage_references(text: str, passages: Sequence[Passage]) -> str:
+    """Replace ``[Passage N]`` references in ``text`` with document names.
+
+    The RAG prompt labels each retrieved chunk as ``[Passage N]`` so the model
+    can ground its answer, but End_Users never see those numbered blocks — a
+    citation like "依据：[Passage 1]" is meaningless to them. The prompt asks
+    the model to cite document names instead; this is the deterministic safety
+    net for when it echoes the internal labels anyway.
+
+    Args:
+        text: The generated answer, possibly containing ``[Passage N]``.
+        passages: The passages sent to the model, in prompt order (1-based).
+
+    Returns:
+        ``text`` with each resolvable reference replaced by the corresponding
+        source document name (e.g. ``[hr_employee_handbook.docx]``).
+        Out-of-range references are left unchanged.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        index = int(match.group(1))
+        if 1 <= index <= len(passages):
+            return f"[{passages[index - 1].document_name}]"
+        return match.group(0)
+
+    return _PASSAGE_REF_PATTERN.sub(_replace, text)

@@ -36,9 +36,14 @@ Design seams:
 from __future__ import annotations
 
 import logging
+import re
 from typing import AsyncIterator, Callable, Protocol, Sequence, runtime_checkable
 
-from app.ai.prompts import NO_MATCH_MESSAGE, build_rag_messages
+from app.ai.prompts import (
+    NO_MATCH_MESSAGE,
+    build_rag_messages,
+    rewrite_passage_references,
+)
 from app.core.models import GeneratedResponse, Passage
 
 logger = logging.getLogger(__name__)
@@ -57,6 +62,36 @@ COULD_NOT_PROCESS_MESSAGE = (
     "Sorry, I couldn't process your request right now. Please try again in a "
     "few moments."
 )
+
+#: Matches an *incomplete* "[Passage N" label at the end of a text chunk —
+#: any prefix of the full label the model may still be in the middle of
+#: emitting (e.g. "[", "[Pass", "[Passage 1"). Used to hold back the tail of
+#: a streamed delta until the label is complete enough to rewrite.
+_PARTIAL_PASSAGE_REF = re.compile(
+    r"\[\s*(?:p(?:a(?:s(?:s(?:a(?:g(?:e(?:\s+\d*\s*)?)?)?)?)?)?)?)?$",
+    re.IGNORECASE,
+)
+
+
+def _rewrite_stream_chunk(
+    text: str, passages: Sequence[Passage]
+) -> tuple[str, str]:
+    """Rewrite passage references in ``text``, holding back a partial label.
+
+    Args:
+        text: The buffered stream text to process.
+        passages: The passages sent to the model, in prompt order.
+
+    Returns:
+        ``(emit, pending)`` where ``emit`` is safe to deliver now (complete
+        ``[Passage N]`` labels rewritten to document names) and ``pending`` is
+        a trailing chunk that may be the start of a label still being streamed.
+    """
+    rewritten = rewrite_passage_references(text, passages)
+    partial = _PARTIAL_PASSAGE_REF.search(rewritten)
+    if partial:
+        return rewritten[: partial.start()], rewritten[partial.start() :]
+    return rewritten, ""
 
 
 @runtime_checkable
@@ -136,6 +171,11 @@ class ResponseGenerator:
                 text=COULD_NOT_PROCESS_MESSAGE, citations=[], status="failed"
             )
 
+        # The prompt forbids "[Passage N]" citations, but models occasionally
+        # echo the internal labels anyway; rewrite them to document names so
+        # End_Users never see references to passages they cannot read.
+        answer = rewrite_passage_references(answer, passages)
+
         citations = self._unique_document_names(passages)
         self._record_access(passages)
         return GeneratedResponse(text=answer, citations=citations, status="success")
@@ -172,12 +212,19 @@ class ResponseGenerator:
 
         messages = build_rag_messages(query, list(passages))
         parts: list[str] = []
+        # Hold-back buffer so a "[Passage N]" label split across deltas can
+        # still be rewritten to a document name before the End_User sees it.
+        pending = ""
         try:
             async for delta in self._client.generate_stream(messages):
                 parts.append(delta)
-                yield ("delta", delta)
+                emit, pending = _rewrite_stream_chunk(pending + delta, passages)
+                if emit:
+                    yield ("delta", emit)
         except Exception:  # noqa: BLE001 - any AI/timeout failure → Failed (Req 8.8/8.9)
             logger.warning("streaming RAG generation failed; returning error response")
+            if pending:
+                yield ("delta", pending)
             notice = ("\n\n" if parts else "") + COULD_NOT_PROCESS_MESSAGE
             yield ("delta", notice)
             yield (
@@ -188,12 +235,17 @@ class ResponseGenerator:
             )
             return
 
+        if pending:
+            yield ("delta", pending)
+
         citations = self._unique_document_names(passages)
         self._record_access(passages)
         yield (
             "done",
             GeneratedResponse(
-                text="".join(parts), citations=citations, status="success"
+                text=rewrite_passage_references("".join(parts), passages),
+                citations=citations,
+                status="success",
             ),
         )
 
