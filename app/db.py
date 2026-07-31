@@ -70,7 +70,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         response_status   TEXT NOT NULL,
         latency_ms        INTEGER,
         tool              TEXT NOT NULL,
-        verified_space_id INTEGER REFERENCES intent_spaces(id)
+        verified_space_id INTEGER REFERENCES intent_spaces(id),
+        feedback          TEXT
     )
     """,
     """
@@ -161,7 +162,27 @@ def create_schema(conn: sqlite3.Connection) -> None:
     """
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
+    _apply_migrations(conn)
     conn.commit()
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to the current schema, idempotently.
+
+    ``CREATE TABLE IF NOT EXISTS`` does not alter tables that already exist,
+    so columns added after first release are applied here via guarded
+    ``ALTER TABLE`` statements.
+
+    Args:
+        conn: An open SQLite connection with the base schema created.
+    """
+    # query_log.feedback: End_User 👍/👎 verdicts ('up'/'down'/NULL).
+    # Index-based access so this works with or without a Row factory.
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(query_log)")
+    }
+    if "feedback" not in columns:
+        conn.execute("ALTER TABLE query_log ADD COLUMN feedback TEXT")
 
 
 def seed_defaults(conn: sqlite3.Connection) -> None:

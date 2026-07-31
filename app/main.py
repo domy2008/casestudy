@@ -225,7 +225,11 @@ async def lifespan(app: FastAPI):
     )
 
     telegram_adapter = TelegramAdapter(
-        credential_store=credential_store, settings=settings, error_log=None
+        credential_store=credential_store,
+        settings=settings,
+        error_log=None,
+        # End-user 👍/👎 button presses land in the query_log via analytics.
+        feedback_recorder=analytics.record_feedback,
     )
     teams_adapter = TeamsAdapter(
         credential_store=credential_store, settings=settings

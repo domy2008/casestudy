@@ -601,6 +601,9 @@ class Orchestrator:
         query_log_id = None
         if self._analytics is not None:
             query_log_id = self._analytics.log_query(entry)
+        # Expose the log id on the response so delivery can attach feedback
+        # controls (👍/👎) that reference this query.
+        response.query_log_id = query_log_id
 
         # Record document access only for a genuinely answered (grounded) query
         # — one row per unique document that grounded the response (Req 10.2).

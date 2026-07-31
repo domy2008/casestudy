@@ -334,6 +334,113 @@ class AnalyticsService:
                 result[sid] = float(round(100 * match.get(sid, 0) / total))
         return result
 
+    # -- Knowledge gaps ------------------------------------------------------
+
+    def knowledge_gaps(
+        self,
+        start: datetime | str | None = None,
+        end: datetime | str | None = None,
+        n: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Return the top unanswered questions ("knowledge gaps"), count desc.
+
+        A no-match answer is logged as Success but never writes a
+        ``document_access`` row (only grounded answers do), so unanswered
+        queries are exactly the Success entries with no access rows. Identical
+        query texts are grouped so a frequently asked unanswered question
+        ranks by how often it was asked. Integration-test traffic (tools
+        ending in ``-test``) is excluded.
+
+        Args:
+            start: Inclusive lower bound on the query timestamp, or ``None``.
+            end: Inclusive upper bound on the query timestamp, or ``None``.
+            n: Maximum number of grouped questions to return (default 10).
+
+        Returns:
+            Dicts with ``query_text``, ``space_name`` (of the most recent
+            occurrence), ``count``, and ``last_ts``, ordered by count then
+            recency descending.
+        """
+        clauses = [
+            "q.response_status = 'Success'",
+            "q.tool NOT LIKE '%-test'",
+            "NOT EXISTS (SELECT 1 FROM document_access a WHERE a.query_log_id = q.id)",
+        ]
+        params: list[Any] = []
+        if start is not None:
+            clauses.append("q.ts >= ?")
+            params.append(_to_iso(start))
+        if end is not None:
+            clauses.append("q.ts <= ?")
+            params.append(_to_iso(end))
+        sql = (
+            "SELECT q.query_text, COUNT(*) AS cnt, MAX(q.ts) AS last_ts, "
+            "(SELECT detected_space_id FROM query_log q2 "
+            " WHERE q2.query_text = q.query_text ORDER BY q2.ts DESC LIMIT 1) "
+            " AS space_id "
+            "FROM query_log q WHERE " + " AND ".join(clauses) + " "
+            "GROUP BY q.query_text ORDER BY cnt DESC, last_ts DESC LIMIT ?"
+        )
+        params.append(n)
+        rows = self._conn.execute(sql, params).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            space = self._spaces.get(row["space_id"])
+            result.append(
+                {
+                    "query_text": row["query_text"],
+                    "space_name": space["name"] if space else f"#{row['space_id']}",
+                    "count": int(row["cnt"]),
+                    "last_ts": row["last_ts"],
+                }
+            )
+        return result
+
+    # -- End-user feedback ---------------------------------------------------
+
+    def record_feedback(self, query_log_id: int, verdict: str) -> bool:
+        """Record an End_User 👍/👎 verdict for a query, never raising.
+
+        Args:
+            query_log_id: The Query_Log row the feedback refers to.
+            verdict: ``"up"`` or ``"down"``; anything else is rejected.
+
+        Returns:
+            ``True`` when a row was updated, ``False`` for an invalid verdict,
+            an unknown id, or a persistence failure (which is swallowed so
+            feedback can never break message handling).
+        """
+        if verdict not in ("up", "down"):
+            return False
+        try:
+            cursor = self._conn.execute(
+                "UPDATE query_log SET feedback = ? WHERE id = ?",
+                (verdict, query_log_id),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+        except Exception:  # noqa: BLE001 - feedback is strictly best-effort
+            logger.exception("failed to record feedback; swallowing")
+            return False
+
+    def feedback_summary(self) -> dict[str, Any]:
+        """Aggregate End_User feedback into counts and a satisfaction rate.
+
+        Returns:
+            ``{"up": int, "down": int, "satisfaction_pct": float | None}``
+            where the percentage is 👍 over all verdicts rounded to a whole
+            percent, or ``None`` when no feedback has been recorded.
+        """
+        row = self._conn.execute(
+            "SELECT SUM(feedback = 'up') AS up, SUM(feedback = 'down') AS down "
+            "FROM query_log WHERE feedback IS NOT NULL"
+        ).fetchone()
+        up = int(row["up"] or 0)
+        down = int(row["down"] or 0)
+        total = up + down
+        pct = float(round(100 * up / total)) if total else None
+        return {"up": up, "down": down, "satisfaction_pct": pct}
+
     # -- Verification ------------------------------------------------------
 
     def verify_query(self, query_log_id: int, verified_space_id: int) -> None:

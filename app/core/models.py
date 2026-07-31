@@ -118,11 +118,16 @@ class GeneratedResponse:
             Empty when there are no cited documents.
         status: Generation outcome, one of ``"success"``, ``"no_match"``, or
             ``"failed"``.
+        query_log_id: The Query_Log row id for this query, set by the
+            Orchestrator after logging so delivery can attach feedback
+            controls (👍/👎) that reference it. ``None`` when logging failed
+            or has not happened.
     """
 
     text: str
     citations: list[str] = field(default_factory=list)
     status: str = "success"
+    query_log_id: int | None = None
 
 
 @dataclass
