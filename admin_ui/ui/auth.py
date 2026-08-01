@@ -32,6 +32,8 @@ module never requires a Streamlit runtime.
 from __future__ import annotations
 
 import hmac
+import hashlib
+import hmac
 import os
 
 from admin_ui.ui.components import AIA_RED, AIA_RED_DARK, AIA_TAGLINE, NEUTRAL
@@ -49,8 +51,39 @@ DEFAULT_PASSWORD: str = "hireme"
 #: ``st.session_state`` key holding the authenticated flag for the session.
 AUTH_SESSION_KEY: str = "ik_authenticated"
 
+#: Transient ``st.session_state`` key signalling that the next authenticated
+#: run should (re)issue or clear the "remember me" cookie. Value is ``True`` to
+#: set the cookie, ``False`` to clear it; absent means "leave it alone".
+REMEMBER_PENDING_KEY: str = "ik_remember_pending"
+
 #: Query-string parameter that triggers a logout when present and truthy.
 LOGOUT_PARAM: str = "logout"
+
+#: Name of the first-party cookie that persists a "remember me" login across
+#: browser sessions. It holds only an HMAC token (never the passcode).
+REMEMBER_COOKIE: str = "ik_remember"
+
+#: How long a remembered login stays valid, in days.
+REMEMBER_MAX_AGE_DAYS: int = 30
+
+
+def remember_token(environ: dict[str, str] | None = None) -> str:
+    """Return the opaque "remember me" token for the current credentials.
+
+    The token is ``HMAC-SHA256(key=passcode, msg=account)`` hex-encoded, so it
+    proves a prior successful login without storing the passcode in the cookie,
+    and it self-invalidates whenever the account or passcode is rotated.
+
+    Args:
+        environ: Optional environment mapping (defaults to ``os.environ``).
+
+    Returns:
+        The hex-encoded HMAC token.
+    """
+    user, password = expected_credentials(environ)
+    return hmac.new(
+        password.encode("utf-8"), user.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
 
 def expected_credentials(environ: dict[str, str] | None = None) -> tuple[str, str]:
@@ -145,6 +178,65 @@ def _inject_login_css() -> None:
     )
 
 
+def _write_remember_cookie(value: str, max_age_seconds: int) -> None:
+    """Set (or, with ``max_age_seconds=0``, clear) the remember-me cookie.
+
+    Streamlit has no server-side cookie API, so the cookie is written on the
+    parent document from a zero-height helper component. The component's
+    ``srcdoc`` iframe is same-origin with the app, so ``window.parent.document``
+    is reachable and the cookie lands as a first-party cookie on the portal
+    domain (``Secure``; HTTPS-only).
+
+    Args:
+        value: The cookie value (an HMAC token), or ``""`` when clearing.
+        max_age_seconds: Cookie lifetime in seconds; ``0`` expires it now.
+    """
+    import streamlit.components.v1 as components
+
+    components.html(
+        "<script>try{window.parent.document.cookie="
+        f'"{REMEMBER_COOKIE}={value}; Max-Age={max_age_seconds}; '
+        'Path=/; SameSite=Lax; Secure";}catch(e){}</script>',
+        height=0,
+    )
+
+
+def _remembered(environ: dict[str, str] | None = None) -> bool:
+    """Return ``True`` when a valid remember-me cookie is present.
+
+    Reads the cookie sent with the page request via ``st.context.cookies`` and
+    compares it in constant time to the expected :func:`remember_token`, so a
+    tampered or stale token (e.g. after a passcode rotation) is rejected.
+    """
+    import streamlit as st
+
+    try:
+        cookies = st.context.cookies
+    except Exception:  # pragma: no cover — older/headless runtimes
+        return False
+    token = cookies.get(REMEMBER_COOKIE) if cookies else None
+    if not token:
+        return False
+    return hmac.compare_digest(token, remember_token(environ))
+
+
+def _apply_pending_remember() -> None:
+    """Issue or clear the remember-me cookie requested at the last sign-in.
+
+    Runs on the authenticated rerun (not the interrupted submit run) so the
+    cookie-writing component actually flushes to the browser.
+    """
+    import streamlit as st
+
+    if REMEMBER_PENDING_KEY not in st.session_state:
+        return
+    remember = st.session_state.pop(REMEMBER_PENDING_KEY)
+    if remember:
+        _write_remember_cookie(remember_token(), REMEMBER_MAX_AGE_DAYS * 86400)
+    else:
+        _write_remember_cookie("", 0)
+
+
 def _render_login() -> None:
     """Render the branded login page with the account/passcode form."""
     import streamlit as st
@@ -158,11 +250,15 @@ def _render_login() -> None:
         passcode = st.text_input(
             "Passcode", type="password", placeholder="Enter your passcode"
         )
+        remember = st.checkbox("Remember my password", value=False)
         submitted = st.form_submit_button("Sign in")
 
     if submitted:
         if verify_credentials(account, passcode):
             st.session_state[AUTH_SESSION_KEY] = True
+            # Defer the cookie write to the next (authenticated) run so the
+            # helper component flushes instead of being cut off by st.rerun().
+            st.session_state[REMEMBER_PENDING_KEY] = bool(remember)
             st.rerun()
         else:
             st.error("Incorrect account or passcode. Please try again.")
@@ -178,6 +274,9 @@ def _render_login() -> None:
 def _handle_logout() -> bool:
     """Clear auth when the logout query param is present.
 
+    Clears both the per-session flag and the persistent remember-me cookie so
+    a remembered browser is fully signed out.
+
     Returns:
         ``True`` if a logout was processed (session flag cleared).
     """
@@ -185,6 +284,8 @@ def _handle_logout() -> bool:
 
     if st.query_params.get(LOGOUT_PARAM):
         st.session_state.pop(AUTH_SESSION_KEY, None)
+        st.session_state.pop(REMEMBER_PENDING_KEY, None)
+        _write_remember_cookie("", 0)
         st.query_params.clear()
         return True
     return False
@@ -199,8 +300,14 @@ def require_login() -> None:
     """
     import streamlit as st
 
-    _handle_logout()
+    if _handle_logout():
+        _render_login()
+        st.stop()
     if st.session_state.get(AUTH_SESSION_KEY):
+        _apply_pending_remember()
+        return
+    if _remembered():
+        st.session_state[AUTH_SESSION_KEY] = True
         return
     _render_login()
     st.stop()

@@ -39,7 +39,12 @@ in-app login page** (Streamlit) that validates a **single shared account**
 There is no per-user identity, no lockout or rate limiting on passcode
 guesses, and the authenticated flag lives only in the per-session Streamlit
 state (a full browser refresh requires signing in again; `/?logout=1` clears
-it). Anyone holding or guessing that one passcode gets full admin power:
+it). An optional **"Remember my password"** checkbox persists login across
+browser sessions for 30 days by storing an HMAC token (not the passcode) in a
+first-party `Secure` cookie; the token self-invalidates when the passcode is
+rotated. Because the cookie must be set from JavaScript it is not `HttpOnly`,
+so it is readable by any script on the page (an XSS foothold could exfiltrate
+it) — accepted for the demo, distributed out-of-band to a small audience. Anyone holding or guessing that one passcode gets full admin power:
 upload/delete knowledge-base documents, read masked integration status,
 reconfigure IM credentials, and use the Test Chat.
 
