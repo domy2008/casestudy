@@ -35,7 +35,7 @@ IntelliKnow KMS addresses three enterprise pain points: fragmented information, 
 - **Dashboard** — system summary cards: document counts by status, 24-hour query activity, integration health.
 - **Frontend Integration** — credential entry (masked on re-read), connectivity tests, error logs.
 - **KB Management** — upload zone, document table (name/date/format/status), search/filter, space assignment.
-- **Intent Configuration** — intent space cards, keyword editor, confidence threshold setting.
+- **Intent Configuration** — intent space cards, keyword editor, confidence threshold setting, and **AI keyword suggestions** that mine an existing space's verified-but-misrouted queries for new routing keywords the admin can accept in one click.
 - **Analytics** — query history with intent + confidence, top documents/spaces, per-space accuracy, CSV export.
 - **Test Chat** — chat with the knowledge base directly in the browser, no IM client needed.
 
@@ -112,8 +112,13 @@ If a test fails, the card shows the reason and the screen lists the recent error
 
 1. **Analytics** shows the query history (text, detected intent, confidence, status), the most-accessed documents, the most common spaces, and per-space accuracy.
 2. Mark the correct space for misclassified queries in the **verification** control — accuracy rates update from your verdicts, and adding keywords to spaces improves future routing.
-3. Export everything as CSV for offline reporting.
-4. Infrastructure monitoring is embedded in the portal's **Dashboard → Monitoring (CloudWatch)** section — alarm badges plus latency p50/p95 and error-rate charts for the last 6 hours, **no AWS account needed** (the backend reads CloudWatch with the instance's read-only role and caches for 60 s). The three alarms (sustained query-latency degradation, error rate > 5%, backend unhealthy) notify the `intelliknow-alarms` SNS topic; operators with AWS console access can also open the **[IntelliKnow-KMS CloudWatch dashboard](https://cn-north-1.console.amazonaws.cn/cloudwatch/home?region=cn-north-1#dashboards:name=IntelliKnow-KMS)** directly.
+3. **Self-improving routing with AI keyword suggestions.** After you have verified at least one misrouted query for a space, close the loop without hand-writing keywords:
+   1. In **Intent Configuration**, open the **"Create or edit an Intent Space"** section and pick the space from the **Select a space** dropdown (the suggestion tools appear only when editing an existing space, not for a new one).
+   2. Under **✨ AI keyword suggestions**, click **Suggest keywords**. The model reads that space's verified-but-misrouted queries and proposes new routing keywords (existing keywords are never re-suggested).
+   3. Deselect any you don't want, then click **Add selected keywords** — they are merged into the space through the normal validation path.
+   4. If it reports "No misrouted queries verified for this space yet," go back to Analytics and verify a misclassified query for that space first.
+4. Export everything as CSV for offline reporting.
+5. Infrastructure monitoring is embedded in the portal's **Dashboard → Monitoring (CloudWatch)** section — alarm badges plus latency p50/p95 and error-rate charts for the last 6 hours, **no AWS account needed** (the backend reads CloudWatch with the instance's read-only role and caches for 60 s). The three alarms (sustained query-latency degradation, error rate > 5%, backend unhealthy) notify the `intelliknow-alarms` SNS topic; operators with AWS console access can also open the **[IntelliKnow-KMS CloudWatch dashboard](https://cn-north-1.console.amazonaws.cn/cloudwatch/home?region=cn-north-1#dashboards:name=IntelliKnow-KMS)** directly.
 
 ---
 
