@@ -45,6 +45,7 @@ import sqlite3
 import time
 import uuid
 from datetime import datetime, timedelta
+from collections.abc import Iterator
 from typing import Any, Protocol, runtime_checkable
 
 from fastapi import (
@@ -245,23 +246,37 @@ def get_settings_dependency() -> Settings:
 
 def get_connection(
     settings: Settings = Depends(get_settings_dependency),
-) -> sqlite3.Connection:
+) -> Iterator[sqlite3.Connection]:
     """Provide a SQLite connection for repository-backed endpoints.
 
-    The default opens a connection against the configured database. Tests
-    override this dependency to hand back a temp-DB connection, so this default
-    is never exercised under test.
+    Opens a fresh per-request connection against the configured database and
+    closes it once the request finishes.
+
+    ``check_same_thread=False`` is required because FastAPI resolves this sync
+    dependency on a worker thread, while ``async def`` path operations run
+    their body on the event-loop thread. Without it, any ``async`` endpoint
+    (e.g. the AI keyword-suggestion route) touching this connection would raise
+    ``sqlite3.ProgrammingError`` (created in a different thread) → HTTP 500. The
+    connection is never shared between concurrent requests, so cross-thread use
+    is safe here.
+
+    Tests override this dependency to hand back a temp-DB connection, so this
+    default is never exercised under test.
 
     Args:
         settings: The active settings, providing the database path.
 
-    Returns:
-        An open :class:`sqlite3.Connection` with row access configured.
+    Yields:
+        An open :class:`sqlite3.Connection` with row access configured; it is
+        closed when the request completes.
     """
-    conn = sqlite3.connect(str(settings.db_path))
+    conn = sqlite3.connect(str(settings.db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def get_credential_store(
@@ -1588,8 +1603,36 @@ def analytics_top_spaces(
 def analytics_accuracy(
     analytics=Depends(get_analytics_service),
 ) -> dict[str, Any]:
-    """Return per-Intent_Space accuracy (``null`` = N/A) (Req 10.3)."""
-    return {str(sid): pct for sid, pct in analytics.accuracy_by_space().items()}
+    """Return per-Intent_Space accuracy with sample sizes (Req 10.3).
+
+    ``items`` carries one row per space with its ``accuracy`` (``null`` = N/A,
+    i.e. no verified queries), and the ``correct``/``verified`` counts behind
+    that rate. Top-level ``verified``/``unverified``/``total`` give overall
+    verification coverage so a rate over a tiny sample is not misread. The
+    legacy flat ``{space_id: pct}`` mapping is preserved for backward
+    compatibility.
+    """
+    detail = analytics.accuracy_detail_by_space()
+    totals = analytics.verification_totals()
+    payload: dict[str, Any] = {
+        "items": [
+            {
+                "space_id": sid,
+                "accuracy": d["accuracy"],
+                "correct": d["correct"],
+                "verified": d["verified"],
+                "unverified": d["unverified"],
+            }
+            for sid, d in detail.items()
+        ],
+        "verified": totals["verified"],
+        "unverified": totals["unverified"],
+        "total": totals["total"],
+    }
+    # Backward-compatible flat mapping (older UI reads {space_id: pct}).
+    for sid, d in detail.items():
+        payload[str(sid)] = d["accuracy"]
+    return payload
 
 
 @system_router.get("/analytics/export", summary="Export filtered history + metrics as CSV")
