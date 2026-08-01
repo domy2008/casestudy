@@ -124,3 +124,37 @@ first text appears in about a second.
 2. Use a faster generation model for short/simple queries, keeping the
    quality model for complex ones.
 3. Cache answers for repeated queries within an intent space.
+
+## 5. Telegram proxy watchdog holds an Alibaba credential on the host (accepted 2026-08-01)
+
+**Risk**: The Telegram bot reaches Telegram only through an stunnel tunnel to a
+Hong Kong relay ECS instance. When that relay hangs, the bot goes silent with
+no application error. A watchdog (`deploy/tg_proxy_watchdog.py`, run by a
+systemd timer every 2 minutes) probes Telegram through the proxy, restarts the
+local stunnel, and — if still unreachable — reboots the HK relay via the
+Alibaba OpenAPI. Auto-reboot therefore requires an Alibaba access key stored on
+the host at `/etc/intelliknow/tg-watchdog.env` (root-only, mode 600, never
+committed).
+
+The key in use is an existing **sub-user** credential (it can reboot ECS and
+manage DNS but has no RAM/admin rights); a dedicated least-privilege RAM user
+scoped to `ecs:RebootInstance` on the two proxy instances could not be created
+because the available credential lacks `ram:CreatePolicy`.
+
+**Impact**:
+- A host compromise would expose a sub-user key that can reboot ECS instances
+  and edit `autobuy.top` DNS in the account — broader than the watchdog needs.
+- No impact on the KMS data plane; the key is unrelated to the query pipeline.
+
+**Decision**: Accepted for the demo. The blast radius is a limited sub-user
+(not admin), the file is root-only and uncommitted, and auto-reboot is
+optional — with no credential the watchdog still probes, self-heals stunnel,
+and alerts via the `IntelliKnow-TelegramProxyDown` CloudWatch alarm.
+
+**Future mitigations**:
+1. Create a dedicated RAM user scoped to `ecs:RebootInstance` /
+   `ecs:DescribeInstances` on the two proxy instance ARNs and swap the key.
+2. Fix the standby relay (8.218.175.74) so stunnel can fail over automatically,
+   reducing reliance on reboot.
+3. Move the reboot action to a separately-credentialed function (e.g. an
+   Alibaba Function Compute endpoint) so no long-lived key sits on the host.

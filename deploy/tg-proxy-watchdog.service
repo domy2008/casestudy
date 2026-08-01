@@ -1,0 +1,12 @@
+[Unit]
+Description=IntelliKnow Telegram proxy watchdog (probe, self-heal, alert)
+After=network-online.target stunnel-tgclient.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Host-only credential + config file (root:root, mode 600); never committed.
+EnvironmentFile=/etc/intelliknow/tg-watchdog.env
+ExecStart=/opt/intelliknow/venv/bin/python /opt/intelliknow/app/deploy/tg_proxy_watchdog.py
+# Never let a watchdog failure escalate; it is scheduled to retry.
+SuccessExitStatus=0

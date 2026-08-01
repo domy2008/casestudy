@@ -121,6 +121,40 @@ environment-dependent and are verified manually, not by the automated suite.
 - [ ] **Proxy failure handling (Req 12.6):** point `TELEGRAM_PROXY_URL` at an unreachable host, restart `app`, confirm 3 retries are logged as proxy failures, then restore
 - [ ] No credential values appear in `docker compose logs app` output (Req 11.3)
 
+## 5a. Telegram proxy watchdog (self-heal + alert)
+
+The Telegram bot reaches Telegram only through an stunnel tunnel
+(`127.0.0.1:8888`) to a Hong Kong relay ECS instance. If that relay hangs the
+bot goes silent with no application error, so a watchdog guards it.
+
+- `deploy/tg_proxy_watchdog.py` — probes `api.telegram.org` through the proxy;
+  on failure restarts `stunnel-tgclient`, re-probes, and (if still down and a
+  reboot credential is configured) reboots the HK relay via the Alibaba
+  OpenAPI. It always publishes a `TelegramProxyHealthy` (1/0) CloudWatch metric.
+- `deploy/tg-proxy-watchdog.{service,timer}` — systemd oneshot + 2-minute timer.
+- Alarm `IntelliKnow-TelegramProxyDown` (metric `< 1`, missing = breaching)
+  notifies the `intelliknow-alarms` SNS topic.
+
+Install (once per host):
+
+```bash
+sudo install -d -m 700 /etc/intelliknow
+# Create /etc/intelliknow/tg-watchdog.env (root:root, 600) with:
+#   ALIBABA_CLOUD_ACCESS_KEY_ID / ALIBABA_CLOUD_ACCESS_KEY_SECRET  (optional; enables reboot)
+#   TG_PROXY_INSTANCE_ID=<hk relay ecs id>   TG_PROXY_REGION=cn-hongkong
+#   AWS_DEFAULT_REGION=cn-north-1            TG_PROXY_URL=http://127.0.0.1:8888
+sudo cp deploy/tg-proxy-watchdog.service deploy/tg-proxy-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now tg-proxy-watchdog.timer
+```
+
+The credential file is host-only and never committed (see KNOWN_RISKS #5).
+Without it the watchdog still probes, restarts stunnel, and alerts.
+
+```bash
+sudo systemctl start tg-proxy-watchdog.service   # run one probe now
+sudo journalctl -u tg-proxy-watchdog.service     # watchdog history
+```
+
 ## 6. Operations quick reference
 
 ```bash
