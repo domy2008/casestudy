@@ -2,7 +2,7 @@
 
 A Gen AI-powered Knowledge Management System. End users ask questions from **Telegram**, **Microsoft Teams**, or **WhatsApp** — or right in the web console's **Test Chat** — and receive concise, **cited** answers generated with Retrieval-Augmented Generation (RAG) over an admin-managed document knowledge base.
 
-Live demo: **https://kms.autobuy.top** (access credentials are provided separately)
+Live demo: **https://kms.autobuy.top** (access credentials are provided separately, e.g. by email).
 
 ---
 
