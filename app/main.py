@@ -232,12 +232,17 @@ async def lifespan(app: FastAPI):
         feedback_recorder=analytics.record_feedback,
     )
     teams_adapter = TeamsAdapter(
-        credential_store=credential_store, settings=settings
+        credential_store=credential_store,
+        settings=settings,
+        # End-user 👍/👎 card presses land in the query_log via analytics.
+        feedback_recorder=analytics.record_feedback,
     )
     whatsapp_adapter = WhatsAppAdapter(
         credential_store=credential_store,
         settings=settings,
         error_log=error_log_repo,
+        # End-user 👍/👎 button replies land in the query_log via analytics.
+        feedback_recorder=analytics.record_feedback,
     )
 
     telegram_dispatcher = QueryDispatcher(

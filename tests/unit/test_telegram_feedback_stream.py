@@ -73,9 +73,11 @@ async def test_callback_query_records_and_acknowledges():
     finally:
         await adapter.aclose()
 
+    from app.bots.base import FEEDBACK_ACK
+
     assert recorded == [(7, "up")]
     assert answer.call_count == 1
-    assert "Thanks" in json.loads(answer.calls[0].request.content)["text"]
+    assert json.loads(answer.calls[0].request.content)["text"] == FEEDBACK_ACK["up"]
     assert unmark.call_count == 1  # one vote per answer: buttons removed
 
 

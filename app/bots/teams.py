@@ -48,7 +48,16 @@ from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 import httpx
 
-from app.bots.base import REJECTION_MESSAGE, FrontendAdapter, evaluate_inbound
+from app.bots.base import (
+    FEEDBACK_ACK,
+    FEEDBACK_ACK_ERROR,
+    FEEDBACK_PROMPT,
+    REJECTION_MESSAGE,
+    FeedbackRecorder,
+    FrontendAdapter,
+    evaluate_inbound,
+    parse_feedback_payload,
+)
 from app.config import Settings, get_settings
 from app.core.models import ConnectivityResult, GeneratedResponse
 
@@ -65,6 +74,8 @@ __all__ = [
     "format_teams_message",
     "extract_conversation_reference",
     "extract_activity_text",
+    "extract_feedback_submit",
+    "build_feedback_card",
     "TeamsError",
     "TeamsAuthError",
     "JwtValidator",
@@ -235,6 +246,76 @@ def extract_conversation_reference(activity: dict) -> dict:
     }
 
 
+def extract_feedback_submit(activity: dict) -> tuple[int, str] | None:
+    """Extract a feedback verdict from an Adaptive Card ``Action.Submit``.
+
+    When a user taps a 👍/👎 button on the feedback card, Teams posts a
+    ``message`` activity whose ``value`` carries the button's ``data`` object
+    (``{"action": "feedback", "query_log_id": N, "verdict": "up"|"down"}``).
+
+    Args:
+        activity: The parsed Bot Framework activity object.
+
+    Returns:
+        ``(query_log_id, verdict)`` for a well-formed feedback submit,
+        otherwise ``None``.
+    """
+    value = activity.get("value")
+    if not isinstance(value, dict) or value.get("action") != "feedback":
+        return None
+    verdict = value.get("verdict")
+    if verdict not in ("up", "down"):
+        return None
+    try:
+        return int(value.get("query_log_id")), verdict
+    except (TypeError, ValueError):
+        return None
+
+
+def build_feedback_card(query_log_id: int) -> dict:
+    """Build the Adaptive Card attachment carrying the 👍/👎 buttons.
+
+    The card shows the shared :data:`~app.bots.base.FEEDBACK_PROMPT` and two
+    ``Action.Submit`` buttons whose ``data`` encodes the query and verdict, so
+    a press returns to the webhook as a message activity with that ``value``.
+
+    Args:
+        query_log_id: The Query_Log row the verdict will be recorded against.
+
+    Returns:
+        A Bot Framework attachment dict wrapping an Adaptive Card.
+    """
+    return {
+        "contentType": "application/vnd.microsoft.card.adaptive",
+        "content": {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4",
+            "body": [{"type": "TextBlock", "text": FEEDBACK_PROMPT, "wrap": True}],
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": "👍",
+                    "data": {
+                        "action": "feedback",
+                        "query_log_id": query_log_id,
+                        "verdict": "up",
+                    },
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "👎",
+                    "data": {
+                        "action": "feedback",
+                        "query_log_id": query_log_id,
+                        "verdict": "down",
+                    },
+                },
+            ],
+        },
+    }
+
+
 # --- Errors --------------------------------------------------------------
 
 
@@ -351,6 +432,10 @@ class TeamsAdapter(FrontendAdapter):
             bearer token. When omitted, tokens are acquired via the
             client-credentials grant using the stored app credentials.
         error_log: Optional sink for integration error-log entries.
+        feedback_recorder: Optional callback recording an End_User 👍/👎
+            verdict as ``(query_log_id, verdict)``. When present, successful
+            answers are followed by a feedback card and button presses are
+            recorded and acknowledged.
     """
 
     tool_name = "teams"
@@ -364,12 +449,14 @@ class TeamsAdapter(FrontendAdapter):
         jwt_validator: JwtValidator | None = None,
         token_provider: TokenProvider | None = None,
         error_log: IntegrationErrorLog | None = None,
+        feedback_recorder: FeedbackRecorder | None = None,
     ) -> None:
         self._credential_store = credential_store
         self._settings = settings if settings is not None else get_settings()
         self._jwt_validator: JwtValidator = jwt_validator or NoopJwtValidator()
         self._token_provider = token_provider
         self._error_log = error_log
+        self._feedback_recorder = feedback_recorder
 
         if http_client is not None:
             self._client = http_client
@@ -468,6 +555,14 @@ class TeamsAdapter(FrontendAdapter):
             # No conversation to reply to (e.g. a bare system event).
             return None
 
+        # A feedback-card button press arrives as a message with a `value`
+        # payload rather than user text; record it and acknowledge (never
+        # forwarded to the Orchestrator).
+        feedback = extract_feedback_submit(activity)
+        if feedback is not None:
+            await self._handle_feedback(conversation_ref, feedback, send_reply)
+            return None
+
         text = extract_activity_text(activity)
         decision = evaluate_inbound(text)
         if decision.forward:
@@ -477,11 +572,70 @@ class TeamsAdapter(FrontendAdapter):
 
         if send_reply:
             await self.send(conversation_ref, self.format(response))
+            await self._maybe_send_feedback_card(conversation_ref, response)
         return response
+
+    async def _handle_feedback(
+        self, conversation_ref: dict, feedback: tuple[int, str], send_reply: bool
+    ) -> None:
+        """Record a feedback verdict and acknowledge it (best-effort).
+
+        Args:
+            conversation_ref: The originating conversation reference.
+            feedback: The ``(query_log_id, verdict)`` from the card submit.
+            send_reply: When ``True``, deliver the acknowledgement message.
+        """
+        query_log_id, verdict = feedback
+        recorded = False
+        if self._feedback_recorder is not None:
+            try:
+                recorded = bool(self._feedback_recorder(query_log_id, verdict))
+            except Exception:  # noqa: BLE001 - feedback must never break the webhook
+                logger.exception("Teams feedback recorder failed; continuing")
+        if send_reply:
+            ack = FEEDBACK_ACK[verdict] if recorded else FEEDBACK_ACK_ERROR
+            try:
+                await self.send(conversation_ref, ack)
+            except Exception as exc:  # noqa: BLE001 - ack delivery is best-effort
+                logger.warning("Teams feedback ack delivery failed: %s", exc)
+
+    async def _maybe_send_feedback_card(
+        self, conversation_ref: dict, response: GeneratedResponse
+    ) -> None:
+        """Send the 👍/👎 feedback card after a successful, logged answer.
+
+        A card is sent only when a recorder is wired, the answer succeeded, and
+        it carries a Query_Log id to attribute the verdict to. Delivery is
+        best-effort so a card failure never affects the answer already sent.
+
+        Args:
+            conversation_ref: The originating conversation reference.
+            response: The generated response just delivered.
+        """
+        if (
+            self._feedback_recorder is None
+            or response.status != "success"
+            or response.query_log_id is None
+        ):
+            return
+        try:
+            await self.send(
+                conversation_ref,
+                FEEDBACK_PROMPT,
+                attachments=[build_feedback_card(response.query_log_id)],
+            )
+        except Exception as exc:  # noqa: BLE001 - card is best-effort
+            logger.warning("Teams feedback card delivery failed: %s", exc)
 
     # --- FrontendAdapter: sending ---------------------------------------
 
-    async def send(self, conversation_ref: dict, text: str) -> None:
+    async def send(
+        self,
+        conversation_ref: dict,
+        text: str,
+        *,
+        attachments: list[dict] | None = None,
+    ) -> None:
         """Deliver a reply activity to the Bot Connector ``serviceUrl``.
 
         Acquires a Bot Framework bearer token (via the injected token provider
@@ -492,6 +646,8 @@ class TeamsAdapter(FrontendAdapter):
             conversation_ref: Reply address produced by
                 :func:`extract_conversation_reference`.
             text: The message body to deliver (already formatted as markdown).
+            attachments: Optional Bot Framework attachments (e.g. the feedback
+                Adaptive Card from :func:`build_feedback_card`).
 
         Raises:
             TeamsError: On a missing ``serviceUrl``/conversation id or an HTTP
@@ -515,6 +671,8 @@ class TeamsAdapter(FrontendAdapter):
             "text": text,
             "textFormat": "markdown",
         }
+        if attachments:
+            payload["attachments"] = attachments
         # Swap identities so the bot answers the originating user.
         if conversation_ref.get("bot"):
             payload["from"] = conversation_ref["bot"]

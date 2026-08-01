@@ -43,7 +43,15 @@ from typing import Protocol
 
 import httpx
 
-from app.bots.base import FrontendAdapter, evaluate_inbound
+from app.bots.base import (
+    FEEDBACK_ACK,
+    FEEDBACK_ACK_ERROR,
+    FEEDBACK_ID_PREFIX,
+    FrontendAdapter,
+    encode_feedback_payload,
+    evaluate_inbound,
+    parse_feedback_payload,
+)
 from app.config import Settings, get_settings
 from app.core.models import ConnectivityResult, GeneratedResponse
 from app.security.credentials import CredentialStore
@@ -138,8 +146,9 @@ QueryHandler = Callable[[dict, str], Awaitable[None]]
 # "up"/"down"; returns True when the verdict was recorded.
 FeedbackRecorder = Callable[[int, str], bool]
 
-# callback_data prefix for the 👍/👎 inline keyboard buttons.
-FEEDBACK_CALLBACK_PREFIX = "fb"
+# callback_data prefix for the 👍/👎 inline keyboard buttons (shared with the
+# other adapters so the encoding is identical everywhere).
+FEEDBACK_CALLBACK_PREFIX = FEEDBACK_ID_PREFIX
 
 # Streaming delivery pacing: minimum seconds between message edits (respects
 # Telegram's edit rate limits) and minimum characters before the first send.
@@ -162,11 +171,11 @@ def build_feedback_keyboard(query_log_id: int) -> dict:
             [
                 {
                     "text": "👍",
-                    "callback_data": f"{FEEDBACK_CALLBACK_PREFIX}:{query_log_id}:up",
+                    "callback_data": encode_feedback_payload(query_log_id, "up"),
                 },
                 {
                     "text": "👎",
-                    "callback_data": f"{FEEDBACK_CALLBACK_PREFIX}:{query_log_id}:down",
+                    "callback_data": encode_feedback_payload(query_log_id, "down"),
                 },
             ]
         ]
@@ -176,6 +185,9 @@ def build_feedback_keyboard(query_log_id: int) -> dict:
 def parse_feedback_callback(data: str | None) -> tuple[int, str] | None:
     """Parse a feedback button's ``callback_data`` into ``(id, verdict)``.
 
+    Thin wrapper over :func:`app.bots.base.parse_feedback_payload` kept for the
+    Telegram-specific name used by the polling handler and its tests.
+
     Args:
         data: The raw ``callback_data`` string from a ``callback_query``.
 
@@ -183,17 +195,7 @@ def parse_feedback_callback(data: str | None) -> tuple[int, str] | None:
         ``(query_log_id, verdict)`` for a well-formed ``fb:<id>:<up|down>``
         payload, otherwise ``None``.
     """
-    if not isinstance(data, str):
-        return None
-    parts = data.split(":")
-    if len(parts) != 3 or parts[0] != FEEDBACK_CALLBACK_PREFIX:
-        return None
-    if parts[2] not in ("up", "down"):
-        return None
-    try:
-        return int(parts[1]), parts[2]
-    except ValueError:
-        return None
+    return parse_feedback_payload(data)
 
 
 def build_sources_footer(citations: list[str]) -> str:
@@ -802,11 +804,10 @@ class TelegramAdapter:
         # Acknowledge the tap (dismisses Telegram's loading spinner).
         callback_id = callback.get("id")
         if callback_id is not None:
-            toast = (
-                "Thanks for your feedback! 🙏"
-                if recorded
-                else "Feedback could not be recorded."
-            )
+            if recorded and parsed is not None:
+                toast = FEEDBACK_ACK[parsed[1]]
+            else:
+                toast = FEEDBACK_ACK_ERROR
             try:
                 await self._call_with_proxy_retries(
                     "answerCallbackQuery",

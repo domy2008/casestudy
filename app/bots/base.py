@@ -21,7 +21,7 @@ adapters reuse identical logic and lets it be property-tested in isolation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from app.core.models import ConnectivityResult, GeneratedResponse
 
@@ -32,6 +32,13 @@ __all__ = [
     "GateDecision",
     "evaluate_inbound",
     "FrontendAdapter",
+    "FeedbackRecorder",
+    "FEEDBACK_PROMPT",
+    "FEEDBACK_ACK",
+    "FEEDBACK_ACK_ERROR",
+    "FEEDBACK_ID_PREFIX",
+    "encode_feedback_payload",
+    "parse_feedback_payload",
 ]
 
 # Inclusive character bounds for a forwardable query (Req 2.1).
@@ -44,6 +51,70 @@ REJECTION_MESSAGE = (
     "Sorry, I can only answer text queries of up to "
     f"{MAX_QUERY_LENGTH:,} characters. Please send your question as text."
 )
+
+
+# --- End-user feedback (👍/👎) shared across all Frontend_Tools -----------
+
+#: A feedback recorder receives ``(query_log_id, verdict)`` where verdict is
+#: ``"up"`` or ``"down"`` and returns ``True`` when the verdict was recorded.
+#: Every adapter is wired to the same recorder (``AnalyticsService`` in
+#: production) so feedback from any channel lands in one place — the KMS
+#: portal's Analytics "User Satisfaction" metric.
+FeedbackRecorder = Callable[[int, str], bool]
+
+#: Compact prompt shown alongside the 👍/👎 controls on every channel.
+FEEDBACK_PROMPT = "Was this helpful?"
+
+#: Confirmation delivered after a verdict is recorded. Identical wording across
+#: Telegram, Teams, and WhatsApp so the End_User experience is consistent, and
+#: signed "AIA" so it reads as coming from the assistant.
+FEEDBACK_ACK: dict[str, str] = {
+    "up": "👍 Thank you for your feedback! — AIA",
+    "down": "👎 Sorry this didn't help. We'll do better. — AIA",
+}
+
+#: Shown when a verdict could not be recorded (unknown id, storage error).
+FEEDBACK_ACK_ERROR = "Sorry, we couldn't record your feedback just now. — AIA"
+
+#: Prefix for the encoded feedback payload carried by a button's callback data
+#: / action id (``fb:<query_log_id>:<verdict>``).
+FEEDBACK_ID_PREFIX = "fb"
+
+
+def encode_feedback_payload(query_log_id: int, verdict: str) -> str:
+    """Encode a feedback button payload as ``fb:<query_log_id>:<verdict>``.
+
+    Args:
+        query_log_id: The Query_Log row the verdict refers to.
+        verdict: ``"up"`` or ``"down"``.
+
+    Returns:
+        The encoded string used as a button's callback data / reply id.
+    """
+    return f"{FEEDBACK_ID_PREFIX}:{query_log_id}:{verdict}"
+
+
+def parse_feedback_payload(data: str | None) -> tuple[int, str] | None:
+    """Parse an encoded feedback payload into ``(query_log_id, verdict)``.
+
+    Args:
+        data: The raw payload string from a button press.
+
+    Returns:
+        ``(query_log_id, verdict)`` for a well-formed ``fb:<id>:<up|down>``
+        payload, otherwise ``None``.
+    """
+    if not isinstance(data, str):
+        return None
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != FEEDBACK_ID_PREFIX:
+        return None
+    if parts[2] not in ("up", "down"):
+        return None
+    try:
+        return int(parts[1]), parts[2]
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)

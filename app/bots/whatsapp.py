@@ -47,9 +47,15 @@ from typing import Protocol, runtime_checkable
 import httpx
 
 from app.bots.base import (
+    FEEDBACK_ACK,
+    FEEDBACK_ACK_ERROR,
+    FEEDBACK_PROMPT,
     REJECTION_MESSAGE,
+    FeedbackRecorder,
     FrontendAdapter,
+    encode_feedback_payload,
     evaluate_inbound,
+    parse_feedback_payload,
 )
 from app.bots.telegram import format_telegram_message
 from app.config import Settings, get_settings
@@ -66,6 +72,7 @@ __all__ = [
     "ErrorLog",
     "WhatsAppDispatcher",
     "extract_inbound_message",
+    "extract_feedback_reply",
     "format_whatsapp_message",
     "WhatsAppAdapter",
 ]
@@ -203,6 +210,62 @@ def extract_inbound_message(notification: dict) -> tuple[str | None, dict | None
     return None, None
 
 
+def extract_feedback_reply(
+    notification: dict,
+) -> tuple[int, str, dict] | None:
+    """Extract a 👍/👎 button reply from a Cloud API notification.
+
+    When a user taps an interactive reply button, WhatsApp sends a message of
+    type ``interactive`` whose ``interactive.button_reply.id`` carries the
+    encoded ``fb:<query_log_id>:<verdict>`` payload.
+
+    Args:
+        notification: The parsed webhook notification body.
+
+    Returns:
+        ``(query_log_id, verdict, conversation_ref)`` for a well-formed
+        feedback button reply, otherwise ``None``.
+    """
+    entries = notification.get("entry")
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        changes = entry.get("changes") if isinstance(entry, dict) else None
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            value = change.get("value") if isinstance(change, dict) else None
+            if not isinstance(value, dict):
+                continue
+            messages = value.get("messages")
+            if not isinstance(messages, list) or not messages:
+                continue
+            message = messages[0]
+            if not isinstance(message, dict) or message.get("type") != "interactive":
+                continue
+            interactive = message.get("interactive")
+            if not isinstance(interactive, dict):
+                continue
+            reply = interactive.get("button_reply")
+            if not isinstance(reply, dict):
+                continue
+            parsed = parse_feedback_payload(reply.get("id"))
+            if parsed is None:
+                continue
+            metadata = value.get("metadata")
+            phone_number_id = (
+                metadata.get("phone_number_id")
+                if isinstance(metadata, dict)
+                else None
+            )
+            conversation_ref = {
+                "to": message.get("from", ""),
+                "phone_number_id": phone_number_id or "",
+            }
+            return parsed[0], parsed[1], conversation_ref
+    return None
+
+
 class WhatsAppAdapter:
     """WhatsApp implementation of :class:`app.bots.base.FrontendAdapter`.
 
@@ -227,6 +290,7 @@ class WhatsAppAdapter:
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
         credentials_resolver: Callable[[], dict[str, str] | None] | None = None,
         error_log: ErrorLog | None = None,
+        feedback_recorder: FeedbackRecorder | None = None,
         api_base: str = WHATSAPP_API_BASE,
         api_version: str = WHATSAPP_API_VERSION,
         proxy_max_retries: int = PROXY_MAX_RETRIES,
@@ -264,6 +328,7 @@ class WhatsAppAdapter:
         self._client_factory = client_factory
         self._credentials_resolver = credentials_resolver
         self._error_log = error_log
+        self._feedback_recorder = feedback_recorder
         self._api_base = api_base.rstrip("/")
         self._api_version = api_version
         self._proxy_max_retries = proxy_max_retries
@@ -453,6 +518,65 @@ class WhatsAppAdapter:
             operation="sendMessage",
         )
 
+    async def send_feedback_prompt(
+        self, conversation_ref: dict, query_log_id: int
+    ) -> None:
+        """Send an interactive 👍/👎 reply-button prompt after an answer.
+
+        WhatsApp interactive bodies are far shorter than a full answer, so the
+        answer is delivered as a normal text message first and this compact
+        prompt follows it. Each button's ``id`` encodes
+        ``fb:<query_log_id>:<verdict>`` so the tap returns identifiable to the
+        webhook.
+
+        Args:
+            conversation_ref: Reply address containing a ``"to"`` key.
+            query_log_id: The Query_Log row the verdict will be recorded against.
+
+        Raises:
+            WhatsAppConfigError: If credentials are not configured.
+            WhatsAppProxyError: If delivery fails after exhausting proxy retries.
+        """
+        creds = self._resolve_credentials()
+        phone_number_id = (
+            conversation_ref.get("phone_number_id") or creds["phone_number_id"]
+        )
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": conversation_ref["to"],
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": FEEDBACK_PROMPT},
+                "action": {
+                    "buttons": [
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": encode_feedback_payload(query_log_id, "up"),
+                                "title": "👍 Yes",
+                            },
+                        },
+                        {
+                            "type": "reply",
+                            "reply": {
+                                "id": encode_feedback_payload(query_log_id, "down"),
+                                "title": "👎 No",
+                            },
+                        },
+                    ]
+                },
+            },
+        }
+        await self._call_with_proxy_retries(
+            http_verb="POST",
+            path=f"{phone_number_id}/messages",
+            token=creds["access_token"],
+            json=payload,
+            operation="sendFeedbackPrompt",
+        )
+
     def format(self, response: GeneratedResponse) -> str:
         """Format a response as plain text + ``Sources:`` footer for WhatsApp.
 
@@ -605,6 +729,13 @@ class WhatsAppAdapter:
             the notification carries no inbound message to answer (e.g. a
             delivery-status callback).
         """
+        # A 👍/👎 button tap arrives as an interactive button reply, not text;
+        # record it and acknowledge (never forwarded to the Orchestrator).
+        feedback = extract_feedback_reply(notification)
+        if feedback is not None:
+            await self._handle_feedback(feedback, send_reply)
+            return None
+
         text, conversation_ref = extract_inbound_message(notification)
         if conversation_ref is None or not conversation_ref.get("to"):
             # No message to reply to (e.g. a status-only callback).
@@ -629,7 +760,59 @@ class WhatsAppAdapter:
                     conversation_ref.get("to"),
                     exc,
                 )
+            else:
+                await self._maybe_send_feedback_prompt(conversation_ref, response)
         return response
+
+    async def _handle_feedback(
+        self, feedback: tuple[int, str, dict], send_reply: bool
+    ) -> None:
+        """Record a feedback verdict and acknowledge it (best-effort).
+
+        Args:
+            feedback: ``(query_log_id, verdict, conversation_ref)`` from the
+                interactive button reply.
+            send_reply: When ``True``, deliver the acknowledgement message.
+        """
+        query_log_id, verdict, conversation_ref = feedback
+        recorded = False
+        if self._feedback_recorder is not None:
+            try:
+                recorded = bool(self._feedback_recorder(query_log_id, verdict))
+            except Exception:  # noqa: BLE001 - feedback must never break the webhook
+                logger.exception("WhatsApp feedback recorder failed; continuing")
+        if send_reply:
+            ack = FEEDBACK_ACK[verdict] if recorded else FEEDBACK_ACK_ERROR
+            try:
+                await self.send(conversation_ref, ack)
+            except Exception as exc:  # noqa: BLE001 - ack delivery is best-effort
+                logger.warning("WhatsApp feedback ack delivery failed: %s", exc)
+
+    async def _maybe_send_feedback_prompt(
+        self, conversation_ref: dict, response: GeneratedResponse
+    ) -> None:
+        """Send the 👍/👎 prompt after a successful, logged answer.
+
+        Sent only when a recorder is wired, the answer succeeded, and it
+        carries a Query_Log id. Best-effort: a prompt failure never affects the
+        answer already delivered.
+
+        Args:
+            conversation_ref: The originating conversation reference.
+            response: The generated response just delivered.
+        """
+        if (
+            self._feedback_recorder is None
+            or response.status != "success"
+            or response.query_log_id is None
+        ):
+            return
+        try:
+            await self.send_feedback_prompt(
+                conversation_ref, response.query_log_id
+            )
+        except Exception as exc:  # noqa: BLE001 - prompt is best-effort
+            logger.warning("WhatsApp feedback prompt delivery failed: %s", exc)
 
     async def aclose(self) -> None:
         """Close the underlying httpx client if this adapter created/owns one."""
