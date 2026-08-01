@@ -7,9 +7,11 @@ stored in the per-session ``st.session_state`` and the real app renders.
 
 Design
 ------
-* **Credentials** come from the ``PORTAL_USER`` / ``PORTAL_PASSWORD``
-  environment variables, defaulting to ``aia`` / ``hireme`` for the demo, so
+* **Credentials** come exclusively from the ``PORTAL_USER`` /
+  ``PORTAL_PASSWORD`` environment variables (set in the host-only ``.env``), so
   they can be rotated without a code change and without an nginx htpasswd file.
+  No credential ships in source: if either variable is unset the portal fails
+  closed and rejects all logins.
 * **Gate** — :func:`require_login` is called at the top of every screen's
   ``_main`` (right after ``set_page_config`` + base CSS). When the session is
   not yet authenticated it renders the login page and calls ``st.stop()`` so no
@@ -44,9 +46,13 @@ PORTAL_USER_ENV: str = "PORTAL_USER"
 #: Environment variable naming the portal passcode.
 PORTAL_PASSWORD_ENV: str = "PORTAL_PASSWORD"
 
-#: Demo defaults used when the environment variables are unset.
-DEFAULT_USER: str = "aia"
-DEFAULT_PASSWORD: str = "hireme"
+#: Portal credentials are supplied exclusively via the ``PORTAL_USER`` /
+#: ``PORTAL_PASSWORD`` environment variables (set in the host-only ``.env``).
+#: There is intentionally no usable built-in default: when either is unset the
+#: portal fails closed (all logins rejected) rather than shipping a public,
+#: guessable credential in source.
+DEFAULT_USER: str = ""
+DEFAULT_PASSWORD: str = ""
 
 #: ``st.session_state`` key holding the authenticated flag for the session.
 AUTH_SESSION_KEY: str = "ik_authenticated"
@@ -94,7 +100,9 @@ def expected_credentials(environ: dict[str, str] | None = None) -> tuple[str, st
             supplied by tests for deterministic values.
 
     Returns:
-        The expected account and passcode, falling back to the demo defaults.
+        The expected account and passcode from the environment. Either may be
+        empty when unset, in which case the portal fails closed (see
+        :func:`verify_credentials`).
     """
     env = os.environ if environ is None else environ
     user = env.get(PORTAL_USER_ENV) or DEFAULT_USER
@@ -121,6 +129,10 @@ def verify_credentials(
         ``True`` only when both account and passcode match exactly.
     """
     exp_user, exp_pw = expected_credentials(environ)
+    # Fail closed: an unconfigured deployment (no PORTAL_PASSWORD) must never
+    # be loggable, including with an empty submission.
+    if not exp_user or not exp_pw:
+        return False
     account_ok = hmac.compare_digest(account or "", exp_user)
     passcode_ok = hmac.compare_digest(passcode or "", exp_pw)
     return account_ok and passcode_ok

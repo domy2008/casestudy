@@ -173,7 +173,7 @@ Variables (see [`.env.example`](.env.example) and [`app/config.py`](app/config.p
 | Variable | Required | Purpose |
 |---|---|---|
 | `CREDENTIAL_MASTER_KEY` | Yes | Fernet key encrypting the credential store. Generate once and keep it safe. |
-| `PORTAL_USER` / `PORTAL_PASSWORD` | Optional | Account + passcode for the in-app admin login page (defaults `aia` / `hireme`). Set to rotate portal access without an nginx htpasswd file. |
+| `PORTAL_USER` / `PORTAL_PASSWORD` | Yes | Account + passcode for the in-app admin login page. No built-in default — if unset the portal rejects all logins. Set both to strong values; rotate anytime without an nginx htpasswd file. |
 | `TELEGRAM_PROXY_URL` | For Telegram | HTTPS forward proxy used only by the Telegram client (Telegram is unreachable from AWS China). |
 | `WHATSAPP_PROXY_URL` | For WhatsApp | HTTPS forward proxy used only by the WhatsApp client (Meta Graph API is unreachable from AWS China). |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` | For CloudWatch | `cn-north-1` (Beijing) or `cn-northwest-1` (Ningxia). |

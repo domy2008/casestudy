@@ -53,14 +53,15 @@ docker compose ps        # app, admin-ui, cloudwatch-agent all Up
   (vhost tracked at `deploy/nginx-kms.autobuy.top.conf`). Authentication is
   handled **in-app**: the Streamlit UI renders a branded AIA login page
   (account + passcode) instead of an nginx basic-auth popup. Credentials come
-  from the `PORTAL_USER` / `PORTAL_PASSWORD` environment variables (defaults
-  `aia` / `hireme`); rotate them by editing `/opt/intelliknow/.env` and
-  restarting the UI:
+  exclusively from the `PORTAL_USER` / `PORTAL_PASSWORD` environment variables
+  and there is **no built-in default** — if they are unset the portal fails
+  closed and rejects all logins. Set both to strong values in
+  `/opt/intelliknow/.env`, then restart the UI:
 
   ```bash
-  # in /opt/intelliknow/.env
-  PORTAL_USER=aia
-  PORTAL_PASSWORD=<new-passcode>
+  # in /opt/intelliknow/.env  (choose your own values; keep this file private)
+  PORTAL_USER=<account>
+  PORTAL_PASSWORD=<passcode>
   # then
   sudo systemctl restart ikms-ui   # (or: docker compose restart admin-ui)
   ```
