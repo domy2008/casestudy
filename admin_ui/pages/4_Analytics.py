@@ -73,6 +73,10 @@ HISTORY_LIMIT = 50
 #: Size of the "top N" usage-metric listings (Req 10.2).
 TOP_N = 10
 
+#: Size of the "top Intent Spaces" listing — kept short since the space count
+#: is small and only the leading domains are useful at a glance.
+TOP_SPACES_N = 2
+
 # Backend endpoint paths consumed by this screen.
 QUERIES_PATH = "/queries"
 TOP_DOCUMENTS_PATH = "/analytics/top-documents"
@@ -691,7 +695,7 @@ def _submit_verifications(
 def _render_usage_metrics(
     client: ApiClient, start_iso: str, end_iso: str
 ) -> None:
-    """Render top-10 documents and top-10 spaces for the range (Req 10.2)."""
+    """Render top-10 documents and top-2 spaces for the range (Req 10.2)."""
     import streamlit as st
 
     section_header("Usage Metrics", module="analytics")
@@ -715,8 +719,11 @@ def _render_usage_metrics(
                 st.info("No document access recorded for this range.")
 
     with col_spaces:
-        st.markdown("**Top 10 Intent Spaces**")
-        data, error = _fetch(client, TOP_SPACES_PATH, params=params)
+        st.markdown(f"**Top {TOP_SPACES_N} Intent Spaces**")
+        spaces_params = build_range_params(
+            start=start_iso, end=end_iso, n=TOP_SPACES_N
+        )
+        data, error = _fetch(client, TOP_SPACES_PATH, params=spaces_params)
         if error is not None:
             st.error(f"Top spaces unavailable: {error}")
         else:
@@ -790,16 +797,43 @@ def _render_accuracy(client: ApiClient, space_names: dict[int, str]) -> None:
     import streamlit as st
 
     section_header("Classification Accuracy", module="analytics")
+    st.caption(
+        "Accuracy is measured only over queries you have verified: of the "
+        "queries the bot routed to a space and you verified, the percent it "
+        "routed correctly. Verify more queries (in Query History) to make "
+        "these rates meaningful."
+    )
     data, error = _fetch(client, ACCURACY_PATH)
     if error is not None:
         st.error(f"Accuracy metrics unavailable: {error}")
+        return
+
+    # Preferred: the enriched payload with per-space sample sizes and overall
+    # coverage. Fall back to the legacy flat mapping for older backends.
+    items = data.get("items") if isinstance(data, dict) else None
+    if items:
+        rows = [
+            {
+                "Intent Space": resolve_space_label(row.get("space_id"), space_names),
+                "Accuracy": format_accuracy(row.get("accuracy")),
+                "Verified": row.get("verified", 0),
+                "Not verified": row.get("unverified", 0),
+            }
+            for row in sorted(items, key=lambda r: r.get("space_id", 0))
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        verified = int(data.get("verified", 0))
+        unverified = int(data.get("unverified", 0))
+        total = int(data.get("total", verified + unverified))
+        st.caption(
+            f"Verified {verified} of {total} queries · {unverified} not yet verified."
+        )
         return
 
     accuracy = normalize_accuracy(data)
     if not accuracy:
         st.info("No verified queries yet — accuracy will appear once you verify.")
         return
-
     rows = [
         {
             "Intent Space": resolve_space_label(sid, space_names),
