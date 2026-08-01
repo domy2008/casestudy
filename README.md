@@ -55,7 +55,7 @@ How to run IntelliKnow KMS day to day, from first login to a working IM bot.
 ### 2.1 Open the admin console
 
 1. Open **https://kms.autobuy.top** in a browser (HTTPS, works on desktop and mobile).
-2. Sign in at the browser's login dialog (HTTP basic auth, realm "IntelliKnow Admin") with the admin credentials provided by your operator. The Teams/WhatsApp webhook endpoints and `/health` remain open, as the platforms cannot authenticate.
+2. On the branded AIA welcome page, enter the **account** and **passcode** provided by your operator and click **Sign in** (authentication is handled in-app, not by a browser popup). The Teams/WhatsApp webhook endpoints and `/health` remain open, as the platforms cannot authenticate.
 3. Use the left sidebar to switch between the six screens; the Dashboard loads first.
 
 ### 2.2 Configure the AI credential (once)
@@ -168,6 +168,7 @@ Variables (see [`.env.example`](.env.example) and [`app/config.py`](app/config.p
 | Variable | Required | Purpose |
 |---|---|---|
 | `CREDENTIAL_MASTER_KEY` | Yes | Fernet key encrypting the credential store. Generate once and keep it safe. |
+| `PORTAL_USER` / `PORTAL_PASSWORD` | Optional | Account + passcode for the in-app admin login page (defaults `aia` / `hireme`). Set to rotate portal access without an nginx htpasswd file. |
 | `TELEGRAM_PROXY_URL` | For Telegram | HTTPS forward proxy used only by the Telegram client (Telegram is unreachable from AWS China). |
 | `WHATSAPP_PROXY_URL` | For WhatsApp | HTTPS forward proxy used only by the WhatsApp client (Meta Graph API is unreachable from AWS China). |
 | `AWS_REGION` / `AWS_DEFAULT_REGION` | For CloudWatch | `cn-north-1` (Beijing) or `cn-northwest-1` (Ningxia). |

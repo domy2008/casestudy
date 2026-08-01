@@ -48,25 +48,31 @@ docker compose ps        # app, admin-ui, cloudwatch-agent all Up
 - `restart: unless-stopped` on every service: dockerd restarts a crashed
   container within 60 seconds (Req 12.5) and brings the stack back after an
   OS boot (Req 12.3).
-- Admin UI (public, for customers): `https://<domain>/admin/` — nginx
-  terminates TLS and enforces **HTTP basic auth** (`/etc/nginx/.htpasswd-kms`),
-  proxying to Streamlit on `127.0.0.1:8501` with websocket upgrade headers.
-  Streamlit must run with `server.baseUrlPath = "admin"` in
-  `.streamlit/config.toml`. Rotate credentials with:
+- Admin UI (public, for customers): `https://<domain>/` — nginx terminates TLS
+  and proxies to Streamlit on `127.0.0.1:8501` with websocket upgrade headers
+  (vhost tracked at `deploy/nginx-kms.autobuy.top.conf`). Authentication is
+  handled **in-app**: the Streamlit UI renders a branded AIA login page
+  (account + passcode) instead of an nginx basic-auth popup. Credentials come
+  from the `PORTAL_USER` / `PORTAL_PASSWORD` environment variables (defaults
+  `aia` / `hireme`); rotate them by editing `/opt/intelliknow/.env` and
+  restarting the UI:
 
   ```bash
-  echo "kmsadmin:$(openssl passwd -apr1 '<new-password>')" | sudo tee /etc/nginx/.htpasswd-kms
+  # in /opt/intelliknow/.env
+  PORTAL_USER=aia
+  PORTAL_PASSWORD=<new-passcode>
+  # then
+  sudo systemctl restart ikms-ui   # (or: docker compose restart admin-ui)
   ```
 
-- Admin REST API: **never public** (nginx only proxies
-  `/webhooks/{teams,whatsapp}`, `/health`, and `/admin/`; ports 8000/8501 are
-  closed in the security group). For scripts (e.g. `upload_corpus.py`) use an
-  SSH tunnel:
+- Admin REST API: **never public** (nginx only proxies the UI at `/`,
+  `/webhooks/{teams,whatsapp}`, and `/health`; ports 8000/8501 are closed in
+  the security group). For scripts (e.g. `upload_corpus.py`) use an SSH tunnel:
 
   ```bash
   ssh -i ~/.ssh/intelliknow-demo.pem -N \
       -L 8501:localhost:8501 -L 8000:localhost:8000 ec2-user@<instance>
-  # Admin UI:  http://localhost:8501/admin/
+  # Admin UI:  http://localhost:8501/
   # Admin API: http://localhost:8000
   ```
 - Enter Telegram / Teams / WhatsApp / DashScope credentials via the Frontend Integration

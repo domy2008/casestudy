@@ -49,6 +49,7 @@ from admin_ui.ui.components import (
     render_sidebar_nav,
     section_header,
 )
+from admin_ui.ui.auth import require_login
 
 #: Navigation key for this screen.
 SCREEN_KEY = "test_chat"
@@ -212,8 +213,9 @@ def _main() -> None:
     """Render the Test Chat screen."""
     import streamlit as st
 
-    st.set_page_config(page_title="IntelliKnow KMS — Test Chat", page_icon="💬")
+    st.set_page_config(page_title="AIA IntelliKnow KMS — Test Chat", page_icon="💬")
     inject_base_css()
+    require_login()
     render_sidebar_nav(SCREEN_KEY)
     section_header("Test Chat", module="test_chat")
     st.caption(

@@ -26,5 +26,9 @@ maxUploadSize = 50
 showErrorDetails = true
 
 [theme]
-# Light, neutral base consistent with the admin UI design.
+# AIA demo skin: light base with the AIA brand red as the primary colour.
 base = "light"
+primaryColor = "#D31145"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f7f7f7"
+textColor = "#212121"

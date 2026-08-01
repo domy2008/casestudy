@@ -3,9 +3,9 @@
 This module is the single source of truth for how every admin screen looks and
 how it talks to the backend. It provides four things (Req 9.1–9.4):
 
-1. **Visual system** — a neutral base colour scheme with per-module accent
-   colours (blue = Frontend Integration, green = KB Management,
-   purple = Intent Configuration), injected as CSS through ``st.markdown``, and
+1. **Visual system** — a neutral base colour scheme with AIA-brand accent
+   colours (graded AIA reds across Frontend Integration, KB Management and
+   Intent Configuration), injected as CSS through ``st.markdown``, and
    a card layout with 12 px rounded corners and 16 px padding (Req 9.3, 9.4).
 2. **Reusable widgets** — a labelled metric/status card and an accent-coloured
    section header (Req 9.3, 9.4).
@@ -75,19 +75,94 @@ NEUTRAL: dict[str, str] = {
     "muted": "#64748b",  # secondary/label text
 }
 
+#: AIA brand palette — demo skin for the AIA presentation. ``AIA_RED`` is the
+#: primary brand red; the darker variants differentiate the three functional
+#: modules while keeping every accent on-brand (supersedes the original
+#: blue/green/purple scheme of Req 9.4 for this customer demo).
+AIA_RED: str = "#D31145"
+AIA_RED_DARK: str = "#A6093D"
+AIA_BURGUNDY: str = "#7A0930"
+
+#: AIA brand tagline shown under the sidebar wordmark.
+AIA_TAGLINE: str = "HEALTHIER, LONGER, BETTER LIVES"
+
+#: Inline SVG wordmark evoking the AIA logo (bold italic red letters over a
+#: red arc). Rendered as markup so no binary asset needs shipping.
+AIA_LOGO_SVG: str = (
+    '<svg width="110" height="46" viewBox="0 0 110 46" role="img" '
+    'aria-label="AIA">'
+    '<text x="2" y="30" font-family="Arial Black, Arial, sans-serif" '
+    f'font-size="30" font-style="italic" font-weight="900" fill="{AIA_RED}">'
+    "AIA</text>"
+    f'<path d="M4 37 Q 55 47 106 33" stroke="{AIA_RED}" stroke-width="3.5" '
+    'fill="none" stroke-linecap="round"/></svg>'
+)
+
+#: Brand-coloured inline SVG glyphs for each Frontend_Tool channel, keyed by the
+#: canonical tool identifier (see :func:`normalize_module`). Rendered as inline
+#: markup so the portal ships no binary icon assets. Each glyph is sized to sit
+#: inline beside a card label (18 px).
+CHANNEL_ICONS: dict[str, str] = {
+    "telegram": (
+        '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="12" fill="#29A9EB"/>'
+        '<path d="M5.5 11.8 16.4 7.3c.6-.2 1.1.2.9.9l-1.9 8.6c-.1.6-.5.7-1 .4'
+        'l-2.8-2-1.3 1.3c-.2.2-.4.3-.7.1l.3-3 5.2-4.7c.2-.2-.1-.3-.3-.2'
+        'l-6.4 4-2.7-.9c-.6-.2-.6-.6.1-.9z" fill="#fff"/></svg>'
+    ),
+    "whatsapp": (
+        '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="12" fill="#25D366"/>'
+        '<path d="M12 5.6a6.3 6.3 0 0 0-5.4 9.5L5.6 18.4l3.4-.9A6.3 6.3 0 1 0 '
+        '12 5.6zm3.7 8.9c-.2.4-.9.8-1.2.8-.3.1-.7.1-1.1 0-.3-.1-.7-.2-1.2-.5'
+        '-2.1-.9-3.5-3-3.6-3.2-.1-.1-.9-1.1-.9-2.2s.5-1.5.7-1.7c.2-.2.4-.3'
+        '.6-.3h.4c.1 0 .3 0 .5.4l.6 1.5c0 .1.1.2 0 .4l-.3.4-.3.3c-.1.1-.2.2'
+        '-.1.4l.6 1c.4.6.9.9 1.3 1.1.2.1.3.1.4 0l.6-.7c.2-.2.3-.2.5-.1l1.4.7'
+        'c.2.1.4.2.4.3.1.1.1.5 0 .8z" fill="#fff"/></svg>'
+    ),
+    "teams": (
+        '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">'
+        '<circle cx="17" cy="6.2" r="2.6" fill="#5059C9"/>'
+        '<rect x="11.5" y="8.6" width="11" height="8.4" rx="1.6" '
+        'fill="#5059C9"/>'
+        '<circle cx="9.2" cy="5.4" r="3" fill="#7B83EB"/>'
+        '<rect x="2.5" y="8.2" width="12" height="9.6" rx="1.8" '
+        'fill="#7B83EB"/>'
+        '<text x="8.5" y="15.4" font-family="Arial, sans-serif" '
+        'font-size="8" font-weight="700" fill="#fff" '
+        'text-anchor="middle">T</text></svg>'
+    ),
+}
+
+
+def channel_icon(tool: str | None) -> str:
+    """Return the inline brand SVG for a Frontend_Tool channel, or ``""``.
+
+    The lookup is case- and separator-insensitive via :func:`normalize_module`,
+    so ``"WhatsApp"``, ``"whatsapp"`` and ``"whats_app"`` all resolve. Unknown
+    channels return the empty string so callers can fall back gracefully.
+
+    Args:
+        tool: The channel/tool label in any casing, or ``None``.
+
+    Returns:
+        The inline SVG markup, or ``""`` when the channel has no icon.
+    """
+    return CHANNEL_ICONS.get(normalize_module(tool), "")
+
+
 #: Per-module accent colours. Keys are canonical module identifiers produced by
-#: :func:`normalize_module`. Only the three functional modules named in the
-#: design carry a distinct accent (Req 9.4); Dashboard and Analytics fall back
-#: to the neutral accent so the accented modules stand out.
+#: :func:`normalize_module`. The three functional modules carry graded AIA-red
+#: accents; Dashboard and Analytics fall back to the primary brand red.
 ACCENT_COLORS: dict[str, str] = {
-    "frontend_integration": "#2563eb",  # blue  — Frontend Integration
-    "kb_management": "#16a34a",  # green — KB Management
-    "intent_configuration": "#7c3aed",  # purple — Intent Configuration
+    "frontend_integration": AIA_RED,
+    "kb_management": AIA_RED_DARK,
+    "intent_configuration": AIA_BURGUNDY,
 }
 
 #: Accent used for modules without a dedicated colour (Dashboard, Analytics,
-#: or any unknown module). A restrained slate that reads as "neutral".
-DEFAULT_ACCENT: str = "#475569"
+#: or any unknown module): the primary AIA brand red.
+DEFAULT_ACCENT: str = AIA_RED
 
 
 def normalize_module(module: str | None) -> str:
@@ -218,6 +293,16 @@ def inject_base_css() -> None:
         letter-spacing: 0.04em;
         margin: 0 0 4px 0;
       }}
+      .ik-card .ik-card-label--icon {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }}
+      .ik-card .ik-card-icon {{
+        display: inline-flex;
+        align-items: center;
+        line-height: 0;
+      }}
       .ik-card .ik-card-value {{
         color: {NEUTRAL['text']};
         font-size: 1.6rem;
@@ -272,6 +357,7 @@ def render_metric_card(
     *,
     module: str | None = None,
     help_text: str | None = None,
+    icon: str | None = None,
 ) -> None:
     """Render a labelled metric/status card on the current page (Req 9.3/9.4).
 
@@ -284,11 +370,20 @@ def render_metric_card(
         value: The metric/status value; rendered via ``str()``.
         module: Optional module label used to pick the accent colour.
         help_text: Optional secondary line beneath the value.
+        icon: Optional inline SVG/emoji markup shown beside the label (e.g. a
+            channel brand glyph from :func:`channel_icon`).
     """
     import streamlit as st
 
+    if icon:
+        label_html = (
+            f'<p class="ik-card-label ik-card-label--icon">'
+            f'<span class="ik-card-icon">{icon}</span>{label}</p>'
+        )
+    else:
+        label_html = f'<p class="ik-card-label">{label}</p>'
     body_parts = [
-        f'<p class="ik-card-label">{label}</p>',
+        label_html,
         f'<p class="ik-card-value">{value}</p>',
     ]
     if help_text:
@@ -300,22 +395,32 @@ def render_metric_card(
     )
 
 
-def section_header(title: str, module: str | None = None) -> None:
+def section_header(
+    title: str, module: str | None = None, *, icon: str | None = None
+) -> None:
     """Render an accent-coloured section header on the current page (Req 9.4).
 
     The header shows ``title`` with a left border tinted to the module's accent
-    colour, giving each module a consistent visual signature.
+    colour, giving each module a consistent visual signature. An optional
+    ``icon`` (inline SVG/emoji) is shown just before the title.
 
     Args:
         title: The header text.
         module: Optional module label used to pick the accent colour.
+        icon: Optional inline SVG/emoji markup rendered before the title.
     """
     import streamlit as st
 
     accent = accent_color(module)
+    icon_html = (
+        f'<span class="ik-card-icon" style="margin-right:8px;'
+        f'vertical-align:-3px">{icon}</span>'
+        if icon
+        else ""
+    )
     st.markdown(
         f'<div class="ik-section-header" style="border-left-color:{accent}">'
-        f"{title}</div>",
+        f"{icon_html}{title}</div>",
         unsafe_allow_html=True,
     )
 
@@ -354,9 +459,10 @@ SCREENS: tuple[Screen, ...] = (
 )
 
 
-#: Path of the reverse proxy's logout endpoint. Visiting it returns 401 for
-#: the basic-auth realm, which makes the browser drop its cached credentials.
-LOGOUT_PATH: str = "/logout"
+#: Logout target. The in-app login gate (:mod:`admin_ui.ui.auth`) clears the
+#: session when this query parameter is present, returning the user to the
+#: branded login page.
+LOGOUT_PATH: str = "/?logout=1"
 
 
 def render_sidebar_nav(active_key: str) -> None:
@@ -376,6 +482,16 @@ def render_sidebar_nav(active_key: str) -> None:
     del active_key
     import streamlit as st
 
+    logo_path = os.path.join(os.path.dirname(__file__), "aia_logo.svg")
+    try:
+        st.logo(logo_path, size="large")
+    except Exception:  # pragma: no cover — fallback if st.logo is unavailable
+        st.sidebar.markdown(AIA_LOGO_SVG, unsafe_allow_html=True)
+    st.sidebar.markdown(
+        f'<div style="color:{NEUTRAL["muted"]};font-size:0.62rem;'
+        f'letter-spacing:0.08em;margin-top:4px">{AIA_TAGLINE}</div>',
+        unsafe_allow_html=True,
+    )
     st.sidebar.markdown(
         f'<div style="margin-top:8px"><a href="{LOGOUT_PATH}" target="_self" '
         f'style="color:{NEUTRAL["muted"]};text-decoration:none;'

@@ -33,19 +33,23 @@ expectations and non-sensitive sample documents.
 
 **Risk**: The admin console originally sat behind an SSH tunnel with nginx
 serving it only on `/admin/`. To make the demo usable by the customer it now
-lives at the site root of `https://kms.autobuy.top`, protected solely by HTTP
-basic auth with a **single shared account** (`kmsadmin`) — no per-user
-identity, no lockout or rate limiting on password guesses at nginx, and no
-server-side session: browsers cache the credential until the window closes
-(the `/logout` endpoint clears it best-effort). Anyone holding or guessing
-that one password gets full admin power: upload/delete knowledge-base
-documents, read masked integration status, reconfigure IM credentials, and
-use the Test Chat.
+lives at the site root of `https://kms.autobuy.top`, protected by a **branded
+in-app login page** (Streamlit) that validates a **single shared account**
+(`aia`) against the `PORTAL_USER` / `PORTAL_PASSWORD` environment variables.
+There is no per-user identity, no lockout or rate limiting on passcode
+guesses, and the authenticated flag lives only in the per-session Streamlit
+state (a full browser refresh requires signing in again; `/?logout=1` clears
+it). Anyone holding or guessing that one passcode gets full admin power:
+upload/delete knowledge-base documents, read masked integration status,
+reconfigure IM credentials, and use the Test Chat.
 
 Direct backend exposure is limited: ports 8000/8501 are closed in the
 security group (verified 2026-07-31); only nginx on 80/443 is reachable, and
 it forwards nothing but the UI, `/webhooks/{teams,whatsapp}`, `/health`, and
-`/logout`.
+`/logout`. Because auth is now enforced in the Streamlit app rather than at
+nginx, the app process is reachable (pre-login) by anyone on the internet —
+acceptable for the demo, but a determined attacker faces the app layer, not
+just nginx.
 
 **Impact**:
 - A leaked or brute-forced password compromises the whole admin surface at
@@ -58,8 +62,8 @@ credential is distributed out-of-band to a small audience.
 
 **Future mitigations (if requirements change)**:
 1. Per-user accounts via a real auth layer (OIDC/SSO reverse proxy such as
-   oauth2-proxy) instead of shared basic auth.
-2. fail2ban (or nginx `limit_req` on 401s) to throttle password guessing.
+   oauth2-proxy) instead of a shared in-app passcode.
+2. Rate limiting / lockout on failed sign-in attempts to throttle guessing.
 3. IP allowlist for the UI location block, keeping only webhooks public.
 4. Separate a read-only "viewer" role from the admin role.
 

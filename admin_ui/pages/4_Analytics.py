@@ -62,6 +62,7 @@ from admin_ui.ui.components import (
     render_sidebar_nav,
     section_header,
 )
+from admin_ui.ui.auth import require_login
 
 #: Navigation key for this screen (matches a :data:`SCREENS` entry).
 SCREEN_KEY = "analytics"
@@ -868,8 +869,9 @@ def _main() -> None:
     """Render the Analytics screen (Req 7.7, 10.2–10.5, 10.7, 10.8)."""
     import streamlit as st
 
-    st.set_page_config(page_title="IntelliKnow KMS — Analytics", page_icon="📊")
+    st.set_page_config(page_title="AIA IntelliKnow KMS — Analytics", page_icon="📊")
     inject_base_css()
+    require_login()
     render_sidebar_nav(SCREEN_KEY)
     section_header("Analytics", module="analytics")
 

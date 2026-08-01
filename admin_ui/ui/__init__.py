@@ -30,8 +30,11 @@ from admin_ui.ui.components import (
     render_sidebar_nav,
     section_header,
 )
+from admin_ui.ui.auth import require_login, verify_credentials
 
 __all__ = [
+    "require_login",
+    "verify_credentials",
     "ACCENT_COLORS",
     "DEFAULT_ACCENT",
     "DEFAULT_API_BASE",

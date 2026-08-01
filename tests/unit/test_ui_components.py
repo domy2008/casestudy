@@ -51,10 +51,10 @@ def test_accent_color_maps_each_module(module: str, expected: str) -> None:
 
 
 def test_module_accents_are_the_designed_hues() -> None:
-    """Blue = Frontend Integration, green = KB Management, purple = Intent Config."""
-    assert accent_color("Frontend Integration") == "#2563eb"  # blue
-    assert accent_color("KB Management") == "#16a34a"  # green
-    assert accent_color("Intent Configuration") == "#7c3aed"  # purple
+    """AIA demo skin: graded AIA-red accents per functional module."""
+    assert accent_color("Frontend Integration") == "#D31145"  # AIA red
+    assert accent_color("KB Management") == "#A6093D"  # dark red
+    assert accent_color("Intent Configuration") == "#7A0930"  # burgundy
 
 
 @pytest.mark.parametrize("module", ["Dashboard", "Analytics", "unknown", "", None])

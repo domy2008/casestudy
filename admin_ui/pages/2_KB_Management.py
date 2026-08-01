@@ -70,6 +70,7 @@ from admin_ui.ui.components import (
     render_sidebar_nav,
     section_header,
 )
+from admin_ui.ui.auth import require_login
 
 #: Navigation key for this screen (matches a ``SCREENS`` entry in components).
 SCREEN_KEY = "kb_management"
@@ -687,8 +688,11 @@ def _main() -> None:
     """Render the KB Management screen (Req 4.4–4.10, 5.6)."""
     import streamlit as st
 
-    st.set_page_config(page_title="IntelliKnow KMS — KB Management", page_icon="📚")
+    st.set_page_config(
+        page_title="AIA IntelliKnow KMS — KB Management", page_icon="📚"
+    )
     inject_base_css()
+    require_login()
     render_sidebar_nav(SCREEN_KEY)
     section_header("KB Management", module=MODULE)
 

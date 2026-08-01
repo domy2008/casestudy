@@ -52,11 +52,13 @@ from typing import Any
 from admin_ui.ui.components import (
     ApiClient,
     ApiError,
+    channel_icon,
     inject_base_css,
     render_metric_card,
     render_sidebar_nav,
     section_header,
 )
+from admin_ui.ui.auth import require_login
 
 #: Navigation key for this screen (matches a :data:`SCREENS` entry).
 SCREEN_KEY = "dashboard"
@@ -323,6 +325,7 @@ def _render_integration_status(client: ApiClient) -> None:
                 status,
                 module="frontend_integration",
                 help_text="Current connection status",
+                icon=channel_icon(tool),
             )
 
 
@@ -372,8 +375,9 @@ def _main() -> None:
     """Render the Dashboard screen with its three independent card groups."""
     import streamlit as st
 
-    st.set_page_config(page_title="IntelliKnow KMS — Dashboard", page_icon="🏠")
+    st.set_page_config(page_title="AIA IntelliKnow KMS — Dashboard", page_icon="🏠")
     inject_base_css()
+    require_login()
     render_sidebar_nav(SCREEN_KEY)
     section_header("Dashboard", module="dashboard")
     st.caption(

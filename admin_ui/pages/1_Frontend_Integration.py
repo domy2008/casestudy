@@ -49,11 +49,13 @@ from typing import Any
 from admin_ui.ui.components import (
     ApiClient,
     ApiError,
+    channel_icon,
     inject_base_css,
     render_metric_card,
     render_sidebar_nav,
     section_header,
 )
+from admin_ui.ui.auth import require_login
 
 #: Navigation key for this screen (matches a ``SCREENS`` entry in components).
 SCREEN_KEY = "frontend_integration"
@@ -392,7 +394,9 @@ def _render_error_log(st: Any, client: ApiClient, tool: str) -> None:
 
 def _render_tool(st: Any, client: ApiClient, tool: str) -> None:
     """Render the full panel (credentials, status/test, errors) for one tool."""
-    section_header(TOOL_TITLES.get(tool, tool.title()), module=MODULE)
+    section_header(
+        TOOL_TITLES.get(tool, tool.title()), module=MODULE, icon=channel_icon(tool)
+    )
     _render_status_and_test(st, client, tool)
     _render_credentials_form(st, client, tool)
     _render_error_log(st, client, tool)
@@ -403,9 +407,10 @@ def _main() -> None:
     import streamlit as st
 
     st.set_page_config(
-        page_title="IntelliKnow KMS — Frontend Integration", page_icon="🔌"
+        page_title="AIA IntelliKnow KMS — Frontend Integration", page_icon="🔌"
     )
     inject_base_css()
+    require_login()
     render_sidebar_nav(SCREEN_KEY)
     section_header("Frontend Integration", module=MODULE)
     st.caption(
