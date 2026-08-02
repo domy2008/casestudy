@@ -58,7 +58,10 @@ def test_async_endpoint_reading_through_get_connection_is_not_500(tmp_path):
     settings = _settings(tmp_path)
 
     class _FakeAI:
+        """AI stand-in: the endpoint must not 500 before reaching the AI call."""
+
         async def chat_completion(self, messages, **kwargs) -> str:
+            """Return an empty JSON object (no keywords suggested)."""
             return "{}"
 
     app = FastAPI()

@@ -292,6 +292,13 @@ async def lifespan(app: FastAPI):
         )
 
     async def _telegram_handler(conversation_ref: dict, text: str) -> None:
+        """Wrap one inbound Telegram message in a QueryContext and dispatch it.
+
+        Args:
+            conversation_ref: Reply address (``{"chat_id": ...}``) the
+                dispatcher sends the answer back to.
+            text: The validated query text from the inbound gate.
+        """
         ctx = QueryContext(
             query_id=str(uuid.uuid4()),
             tool="telegram",
@@ -302,6 +309,12 @@ async def lifespan(app: FastAPI):
         await telegram_dispatcher.dispatch(ctx)
 
     async def _run_telegram_poller() -> None:
+        """Run the long-poll loop for the app's lifetime, containing failures.
+
+        ``run_polling`` self-heals transient errors internally; this wrapper is
+        the final guard so that even an unexpected poller crash is logged
+        rather than propagating into the FastAPI lifespan and killing startup.
+        """
         try:
             await telegram_adapter.run_polling(
                 _telegram_handler, stop_event=stop_event
