@@ -898,7 +898,20 @@ class TelegramAdapter:
                         # Already processed in a previous iteration - skip.
                         continue
                     offset = update_id + 1
-                await self._dispatch_update(update, handler)
+                # Per-update guard: one bad update (handler/orchestrator error)
+                # must never kill the poll loop and take the whole bot offline.
+                # offset was already advanced above, so a failing update is not
+                # retried on the next poll (no poison-pill).
+                try:
+                    await self._dispatch_update(update, handler)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - contain per-update errors
+                    logger.exception(
+                        "Failed to process update %s, skipping: %s",
+                        update_id,
+                        exc,
+                    )
             # Yield so a concurrent stop signal can be observed promptly.
             await asyncio.sleep(0)
 
