@@ -104,6 +104,11 @@ PROXY_MAX_RETRIES = 3
 # empty result set. The httpx client read timeout must exceed this.
 LONG_POLL_TIMEOUT_SECONDS = 25
 
+# How long the poll loop idles between checks while no bot token is configured
+# yet. The loop stays alive so that once an Admin saves a token in the UI it
+# begins polling with it — no application restart required.
+UNCONFIGURED_POLL_INTERVAL_S = 5
+
 # Default seconds between proxy retries (multiplied by the retry index for a
 # simple linear backoff). Tests inject ``0.0`` to run without delay.
 DEFAULT_BACKOFF_BASE_SECONDS = 0.5
@@ -862,6 +867,13 @@ class TelegramAdapter:
                 updates = await self._get_updates(offset, timeout)
             except asyncio.CancelledError:
                 raise
+            except TelegramConfigError as exc:
+                # No bot token configured yet (or it was cleared). Stay alive
+                # and keep checking so that the moment an Admin saves a token
+                # in the UI, polling starts using it — no restart required.
+                logger.debug("telegram not configured yet, waiting: %s", exc)
+                await asyncio.sleep(UNCONFIGURED_POLL_INTERVAL_S)
+                continue
             except TelegramProxyError as exc:
                 logger.warning("getUpdates poll failed, will retry: %s", exc)
                 await asyncio.sleep(1)

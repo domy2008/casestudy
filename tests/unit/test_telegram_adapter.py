@@ -279,6 +279,65 @@ async def test_polling_survives_handler_error(monkeypatch) -> None:
     assert seen == ["boom?", "ok?"]
 
 
+@respx.mock
+async def test_polling_activates_when_token_configured_later(monkeypatch) -> None:
+    """The poller idles without a token and starts polling once one is saved.
+
+    Regression: the poll loop must survive a missing bot token (raising
+    TelegramConfigError) by idling, so an Admin who configures Telegram for the
+    first time via the UI gets a working bot without an app restart. Once the
+    token resolves, the very next poll uses it.
+    """
+    import asyncio
+
+    import app.bots.telegram as tg
+
+    async def _no_sleep(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(tg.asyncio, "sleep", _no_sleep)
+
+    # Simulate a token being saved after a few polls: None until the 3rd call.
+    resolve_calls = {"n": 0}
+
+    def resolver() -> str | None:
+        resolve_calls["n"] += 1
+        return None if resolve_calls["n"] < 3 else _TOKEN
+
+    valid = [{"update_id": 1, "message": {"chat": {"id": 100}, "text": "ping?"}}]
+    respx.get(f"{_BASE}/getUpdates").mock(
+        side_effect=[
+            httpx.Response(200, json={"ok": True, "result": valid}),
+            httpx.Response(200, json={"ok": True, "result": []}),
+        ]
+    )
+    respx.post(f"{_BASE}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    seen: list[str] = []
+    stop = asyncio.Event()
+
+    async def handler(conversation_ref: dict, text: str) -> None:
+        seen.append(text)
+        stop.set()
+
+    adapter = TelegramAdapter(
+        credential_store=_FakeStore(token=None),
+        http_client=httpx.AsyncClient(),
+        backoff_base_s=0.0,
+        token_resolver=resolver,
+    )
+    await asyncio.wait_for(
+        adapter.run_polling(handler, stop_event=stop, poll_timeout=0), timeout=5
+    )
+    await adapter.aclose()
+
+    # It idled while unconfigured (>=2 token-less resolves), then polled.
+    assert resolve_calls["n"] >= 3
+    assert seen == ["ping?"]
+
+
 def test_format_delegates_to_message_formatter() -> None:
     """format() produces plain text plus a Sources footer within the limit."""
     adapter = TelegramAdapter(credential_store=_FakeStore())

@@ -54,7 +54,7 @@ from app.api.monitoring import monitoring_router
 from app.bots.dispatcher import QueryDispatcher
 from app.bots.monitor import IntegrationStatusMonitor
 from app.bots.teams import TeamsAdapter
-from app.bots.telegram import TelegramAdapter, TelegramConfigError
+from app.bots.telegram import TelegramAdapter
 from app.bots.whatsapp import WhatsAppAdapter
 from app.config import Settings, get_settings
 from app.core.models import ConnectivityResult, GeneratedResponse, QueryContext
@@ -276,34 +276,42 @@ async def lifespan(app: FastAPI):
     tasks.append(asyncio.create_task(publisher.run_forever(metrics)))
     tasks.append(asyncio.create_task(monitor.run(stop_event=stop_event)))
 
-    telegram_active = cred_result is not None and "telegram" in cred_result.loaded
-    if telegram_active:
+    # The Telegram poller is started unconditionally, even when no bot token is
+    # configured at startup. The poll loop idles quietly while unconfigured and
+    # begins polling as soon as an Admin saves a token in the UI, so first-time
+    # configuration works without an application restart. The token is read
+    # fresh from the Credential_Store on every poll, so token changes also take
+    # effect live.
+    telegram_configured_at_boot = (
+        cred_result is not None and "telegram" in cred_result.loaded
+    )
+    if not telegram_configured_at_boot:
+        logger.info(
+            "Telegram token not configured at startup; poller will idle and "
+            "activate automatically once a token is saved."
+        )
 
-        async def _telegram_handler(conversation_ref: dict, text: str) -> None:
-            ctx = QueryContext(
-                query_id=str(uuid.uuid4()),
-                tool="telegram",
-                conversation_ref=conversation_ref,
-                text=text,
-                received_at=datetime.now(),
+    async def _telegram_handler(conversation_ref: dict, text: str) -> None:
+        ctx = QueryContext(
+            query_id=str(uuid.uuid4()),
+            tool="telegram",
+            conversation_ref=conversation_ref,
+            text=text,
+            received_at=datetime.now(),
+        )
+        await telegram_dispatcher.dispatch(ctx)
+
+    async def _run_telegram_poller() -> None:
+        try:
+            await telegram_adapter.run_polling(
+                _telegram_handler, stop_event=stop_event
             )
-            await telegram_dispatcher.dispatch(ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a poller failure must not crash startup
+            logger.exception("Telegram polling loop exited unexpectedly")
 
-        async def _run_telegram_poller() -> None:
-            try:
-                await telegram_adapter.run_polling(
-                    _telegram_handler, stop_event=stop_event
-                )
-            except TelegramConfigError:
-                logger.warning(
-                    "Telegram polling not started: bot token is not configured."
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - a poller failure must not crash startup
-                logger.exception("Telegram polling loop exited unexpectedly")
-
-        tasks.append(asyncio.create_task(_run_telegram_poller()))
+    tasks.append(asyncio.create_task(_run_telegram_poller()))
 
     try:
         yield
