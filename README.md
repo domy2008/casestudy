@@ -89,6 +89,8 @@ Each tool takes a few minutes. All three follow the same pattern: create the bot
 
 If a test fails, the card shows the reason and the screen lists the recent error-log entries for that tool.
 
+Credential changes take effect **immediately** — no restart or redeploy needed. This applies to first-time setup and to replacing existing credentials (e.g. rotating a bot token): save, press **Test**, and the running integration is already using the new values.
+
 ### 2.4 Build the knowledge base
 
 1. Go to **KB Management**.

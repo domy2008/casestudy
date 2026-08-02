@@ -1,26 +1,34 @@
 # Test Report — IntelliKnow KMS
 
-Generated: 2026-08-01 | Branch: `main` | Commit: `efcb18e`
+Generated: 2026-08-02 | Branch: `main` | Commit: `ce654ec`
 
 ## 1. Summary
 
 | Metric | Value |
 |---|---|
-| Total tests collected | 369 |
-| Passed | 368 |
+| Total tests collected | 372 |
+| Passed | 371 |
 | Failed | 0 |
 | Skipped | 1 (see §6) |
-| Line coverage (`app/` + `admin_ui/`) | 73% (5304 statements, 1458 missed) |
-| Wall-clock runtime | ~51 s |
+| Line coverage (`app/` + `admin_ui/`) | 73% |
+| Wall-clock runtime | ~37 s |
 | Production smoke test (deployed) | Pass (see §5) |
+| Live IM credential-swap test (deployed) | Pass, all 3 IMs (see §5a) |
 
 Environment: Python 3.11.14, pytest 8.3.5, hypothesis 6.130.0, macOS (local venv).
 
-This run was taken ahead of a customer delivery. It includes the regression
-test added for the async-endpoint database-connection fix (`get_connection`
-now opens SQLite with `check_same_thread=False` and closes per request, so the
-AI keyword-suggestion and other `async` endpoints no longer return HTTP 500),
-and a live smoke test against the deployed instance.
+This run was taken ahead of a customer delivery. Since the previous report it
+adds regression tests for three production fixes:
+
+1. **Async-endpoint DB connections** — `get_connection` opens SQLite with
+   `check_same_thread=False` and closes per request, so AI-suggestion and
+   other `async` endpoints no longer return HTTP 500.
+2. **Telegram poll-loop resilience** — a transient proxy HTTP error (502) or a
+   failing handler on one update is retried/skipped instead of silently
+   killing the polling task.
+3. **First-time Telegram configuration** — the poller now always starts and
+   idles while unconfigured, activating the moment an Admin saves a bot token
+   (no application restart required).
 
 ## 2. How to Run
 
@@ -40,7 +48,7 @@ injected fake or mocked HTTP transport.
 
 | Suite | Location | Tests | Focus |
 |---|---|---|---|
-| Unit | `tests/unit/` | 330 | Every module in isolation: loaders, processor, search index, orchestrator, generator, bot adapters, dispatcher, status monitor, credential store, admin API endpoints (incl. the `get_connection` cross-thread regression test), analytics, monitoring publisher, all 6 Streamlit pages |
+| Unit | `tests/unit/` | 333 | Every module in isolation: loaders, processor, search index, orchestrator, generator, bot adapters (incl. poll-loop resilience and late-configuration regression tests), dispatcher, status monitor, credential store, admin API endpoints (incl. the `get_connection` cross-thread regression test), analytics, monitoring publisher, all 6 Streamlit pages |
 | Integration | `tests/integration/` | 6 | End-to-end ingestion pipeline (upload → parse → structure → index), full query flow (classify → retrieve → generate → log), Teams webhook round-trip |
 | Property-based | `tests/properties/` | 33 | 25 invariants (Hypothesis), one file per property |
 
@@ -94,6 +102,29 @@ The keyword-suggestion endpoint — the one that regressed with an HTTP 500 — 
 verified end to end on the live backend across every seeded space: spaces with
 verified misrouted queries return AI-proposed keywords, and spaces without them
 return the expected "verify queries in Analytics first" message.
+
+## 5a. Live IM Credential-Swap Test (delivery)
+
+Run on the deployed instance on 2026-08-02, simulating exactly what a customer
+does: replace each IM's credentials via the same Save-credentials API the
+Frontend Integration screen uses, verify the running system picks them up
+immediately, then restore. No restarts were performed at any point.
+
+| IM | New credentials used live? | Restore recovered live? |
+|---|---|---|
+| Telegram | Yes — the poll loop and the connectivity test switched to the newly saved token within seconds (observed the new token in `getUpdates`/`getMe` requests) | Yes — polling resumed on its own, 0 residual errors |
+| Microsoft Teams | Yes — the connectivity test immediately attempted Bot Framework auth with the new App ID/Password | Yes — token acquired again instantly |
+| WhatsApp | Yes — the connectivity test immediately called the Graph API with the new phone-number ID/token | Yes — phone number verified again instantly |
+
+Conclusion: for all three IMs, credential changes (first-time setup or
+replacement) take effect **live, without an application restart**. Invalid
+credentials fail visibly in the Test button with the platform's real error and
+do not crash the poller or webhooks.
+
+Note: the swap used format-valid but non-working credentials (no second real
+bot/app was available); the code path is identical for a customer's real
+credentials. Final state after the test: all three integrations green with the
+original credentials.
 
 ## 6. Skipped Test
 
