@@ -182,6 +182,54 @@ async def test_polling_forwards_valid_text_and_rejects_non_text() -> None:
     assert REJECTION_MESSAGE in send_route.calls.last.request.content.decode()
 
 
+@respx.mock
+async def test_polling_survives_http_error_from_proxy(monkeypatch) -> None:
+    """A 502 from the proxy during getUpdates is retried, not fatal.
+
+    Regression: a transient ``502 Bad Gateway`` (proxy relay briefly
+    unhealthy) raised ``httpx.HTTPStatusError``, which previously escaped the
+    poll loop and silently killed the bot until a restart. The loop must
+    absorb it, back off, and keep polling.
+    """
+    import asyncio
+
+    import app.bots.telegram as tg
+
+    async def _no_sleep(*_args, **_kwargs) -> None:
+        return None
+
+    # Keep the test fast: skip the real back-off delay.
+    monkeypatch.setattr(tg.asyncio, "sleep", _no_sleep)
+
+    valid = [{"update_id": 1, "message": {"chat": {"id": 100}, "text": "hi?"}}]
+    respx.get(f"{_BASE}/getUpdates").mock(
+        side_effect=[
+            httpx.Response(502, text="Bad Gateway"),  # transient proxy failure
+            httpx.Response(200, json={"ok": True, "result": valid}),
+            httpx.Response(200, json={"ok": True, "result": []}),
+        ]
+    )
+    respx.post(f"{_BASE}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+
+    forwarded: list[tuple[dict, str]] = []
+    stop = asyncio.Event()
+
+    async def handler(conversation_ref: dict, text: str) -> None:
+        forwarded.append((conversation_ref, text))
+        stop.set()  # recovery proven — end the loop
+
+    adapter = _adapter()
+    await asyncio.wait_for(
+        adapter.run_polling(handler, stop_event=stop, poll_timeout=0), timeout=5
+    )
+    await adapter.aclose()
+
+    # The loop survived the 502 and processed the update from the next poll.
+    assert forwarded == [({"chat_id": 100}, "hi?")]
+
+
 def test_format_delegates_to_message_formatter() -> None:
     """format() produces plain text plus a Sources footer within the limit."""
     adapter = TelegramAdapter(credential_store=_FakeStore())

@@ -875,6 +875,22 @@ class TelegramAdapter:
                 )
                 await asyncio.sleep(1)
                 continue
+            except httpx.HTTPStatusError as exc:
+                # A non-2xx from Telegram or the Outbound_Proxy (e.g. a 502 Bad
+                # Gateway while the proxy relay is briefly unhealthy, or a 429
+                # rate-limit). These are transient: back off and retry rather
+                # than letting the exception kill the poll loop for good.
+                logger.warning("getUpdates HTTP error, will retry: %s", exc)
+                await asyncio.sleep(2)
+                continue
+            except Exception as exc:  # noqa: BLE001 - the poller must never die
+                # Last-resort guard: any unexpected error fetching updates is
+                # logged and retried. Losing the poll loop silently takes the
+                # whole bot offline until a restart, which is worse than a
+                # retry storm we can see in the logs.
+                logger.exception("getUpdates unexpected error, will retry: %s", exc)
+                await asyncio.sleep(2)
+                continue
             for update in updates:
                 update_id = update.get("update_id")
                 if isinstance(update_id, int):
